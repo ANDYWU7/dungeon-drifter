@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#090d11" />
+    <meta name="description" content="A pocket-sized top-down dungeon crawler for the wait between places." />
+    <title>Dungeon Drifter</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app-shell">
+      <div class="portrait-warning" aria-hidden="true">
+        <span class="rotate-glyph">↻</span>
+        <p>Flip your phone sideways<br /><small>Dungeon Drifter plays best in landscape.</small></p>
+      </div>
+
+      <main id="menu-screen" class="screen menu-screen" aria-labelledby="game-title">
+        <div class="menu-content">
+          <p class="menu-kicker">A simple dungeon game</p>
+          <h1 id="game-title">Dungeon Drifter</h1>
+          <p class="tagline">Explore the dungeon and defeat the boss on each floor.</p>
+          <div class="menu-actions">
+            <button id="play-button" class="primary-button" type="button">Play</button>
+            <button id="settings-button" class="secondary-button" type="button">Settings</button>
+          </div>
+          <p class="menu-help">Use the touch controls in landscape mode.</p>
+        </div>
+      </main>
+
+      <section id="settings-screen" class="screen settings-screen hidden" aria-labelledby="settings-title" aria-modal="true" role="dialog">
+        <div class="settings-card">
+          <div class="settings-heading">
+            <div>
+              <p class="eyebrow">Settings</p>
+              <h2 id="settings-title">SETTINGS</h2>
+            </div>
+            <button id="close-settings" class="icon-button" type="button" aria-label="Close settings">×</button>
+          </div>
+          <div class="setting-row volume-row">
+            <div><span class="setting-label">MASTER VOLUME</span><span class="setting-note">Adjust the game sounds.</span></div>
+            <output id="volume-value" for="volume-slider">70%</output>
+          </div>
+          <input id="volume-slider" class="range-input" type="range" min="0" max="100" value="70" aria-label="Master volume" />
+          <div class="setting-row toggle-row">
+            <div><span class="setting-label">SCREEN SHAKE</span><span class="setting-note">Show movement when the player is hit.</span></div>
+            <button id="shake-toggle" class="toggle is-on" type="button" role="switch" aria-checked="true"><span></span><b>ON</b></button>
+          </div>
+          <div class="setting-row toggle-row">
+            <div><span class="setting-label">LIGHT FLASHES</span><span class="setting-note">Show brief flashes during combat.</span></div>
+            <button id="flash-toggle" class="toggle is-on" type="button" role="switch" aria-checked="true"><span></span><b>ON</b></button>
+          </div>
+          <div class="setting-row toggle-row">
+            <div><span class="setting-label">HOLD TO SPRINT</span><span class="setting-note">Hold the sprint control, or press it to toggle.</span></div>
+            <button id="hold-sprint-toggle" class="toggle is-on" type="button" role="switch" aria-checked="true"><span></span><b>ON</b></button>
+          </div>
+          <div class="settings-footer"><span class="footer-mark">DD</span><span>Settings are saved on this device.</span></div>
+        </div>
+      </section>
+
+      <section id="game-screen" class="screen game-screen hidden" aria-label="Dungeon game">
+        <canvas id="game-canvas"></canvas>
+        <div class="game-vignette" aria-hidden="true"></div>
+        <header class="game-hud">
+          <div class="hud-cluster hud-left">
+            <button id="pause-button" class="hud-menu-button" type="button" aria-label="Open pause menu">☰</button>
+            <div class="floor-readout"><span id="floor-name">CAVES</span><strong id="floor-number">01</strong></div>
+            <div class="objective-readout"><span class="pulse-dot"></span><span id="objective-text">Defeat the boss to continue.</span></div>
+          </div>
+          <div class="hud-cluster hud-right">
+            <div class="resource-chip"><span class="resource-icon">✦</span><strong id="gold-count">0</strong><small>GOLD</small></div>
+            <div class="resource-chip"><span class="resource-icon heart-icon">♥</span><strong id="potion-count">2</strong><small>POTIONS</small></div>
+          </div>
+        </header>
+        <div class="health-panel">
+          <div class="health-label"><span>HEALTH</span><strong id="health-text">100 / 100</strong></div>
+          <div class="health-track"><div id="health-fill" class="health-fill"></div></div>
+          <div class="stamina-track"><div id="stamina-fill" class="stamina-fill"></div></div>
+          <div class="equipment-readout" aria-label="Current equipment">
+            <div class="equipment-slot"><span>WEAPON</span><strong id="weapon-readout">UNARMED</strong></div>
+            <div class="equipment-slot"><span>HEAD</span><strong id="head-readout">NONE</strong></div>
+            <div class="equipment-slot"><span>TORSO</span><strong id="torso-readout">NONE</strong></div>
+            <div class="equipment-slot"><span>LEGS</span><strong id="legs-readout">NONE</strong></div>
+          </div>
+        </div>
+        <div id="game-toast" class="game-toast" role="status">The dungeon is ready.</div>
+        <div id="boss-alert" class="boss-alert hidden"><span class="alert-line"></span><strong>The boss is nearby.</strong><span class="alert-line"></span></div>
+
+        <div class="touch-controls" aria-label="Touch controls">
+          <div id="joystick" class="joystick" aria-label="Movement thumbstick">
+            <div class="joystick-ring"><span class="joystick-cross cross-h"></span><span class="joystick-cross cross-v"></span><div id="joystick-knob" class="joystick-knob"><span></span></div></div>
+            <span class="control-caption">MOVE</span>
+          </div>
+          <div class="action-cluster">
+            <button id="potion-button" class="round-action potion-action" type="button" aria-label="Use potion"><span>＋</span><small>POTION</small></button>
+            <button id="attack-button" class="round-action attack-action" type="button" aria-label="Attack"><span class="sword-mark">╱</span><small>STRIKE</small></button>
+            <button id="dash-button" class="round-action dash-action" type="button" aria-label="Dash"><span>»</span><small>DASH</small></button>
+            <button id="sprint-button" class="sprint-action" type="button" aria-label="Sprint"><span class="sprint-glyph">↯</span><span>SPRINT</span></button>
+          </div>
+        </div>
+        <div class="control-hint" aria-hidden="true"><span>SHIFT</span> SPRINT <i></i> <span>Q</span> DASH <i></i> <span>E</span> POTION</div>
+      </section>
+
+      <section id="pause-screen" class="screen pause-screen hidden" aria-labelledby="pause-title" aria-modal="true" role="dialog">
+        <div class="pause-card">
+          <p class="eyebrow">Game paused</p>
+          <h2 id="pause-title">Pause</h2>
+          <div class="pause-actions">
+            <button id="restart-button" class="primary-button" type="button">Restart run</button>
+            <button id="resume-button" class="secondary-button" type="button">Resume</button>
+            <button id="pause-menu-button" class="secondary-button" type="button">Back to menu</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="result-screen" class="screen result-screen hidden" aria-labelledby="result-title">
+        <div class="result-card">
+          <p class="eyebrow" id="result-kicker">You completed the run.</p>
+          <h2 id="result-title">Run complete</h2>
+          <p id="result-copy" class="result-copy">You defeated the boss on every floor.</p>
+          <div class="run-stats"><div><strong id="result-floor">01</strong><span>FLOOR</span></div><div><strong id="result-gold">0</strong><span>GOLD</span></div><div><strong id="result-time">00:00</strong><span>TIME</span></div></div>
+          <div class="result-actions"><button id="replay-button" class="primary-button" type="button">Play again</button><button id="result-menu-button" class="secondary-button" type="button">Back to menu</button></div>
+        </div>
+      </section>
+    </div>
+    <script src="game.js"></script>
+  </body>
+</html>
