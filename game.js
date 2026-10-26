@@ -90,7 +90,21 @@
     $('sprint-button').addEventListener('pointerdown', (e) => { e.preventDefault(); $('sprint-button').setPointerCapture(e.pointerId); pressSprint(); });
     ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((eventName) => $('sprint-button').addEventListener(eventName, releaseSprint));
     setupJoystick();
-    window.addEventListener('keydown', (e) => { if (!game.running || game.paused) return; const key = e.key.toLowerCase(); input.keys.add(key); if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key) || e.code === 'ShiftLeft') e.preventDefault(); if (e.code === 'ShiftLeft' && !e.repeat) pressSprint(); if (!e.repeat && key === 'q') dash(); if (!e.repeat && key === 'e') usePotion(); if (key === ' ') attack(); }, true);
+    window.addEventListener('keydown', (e) => {
+      if (!game.running || game.paused) return;
+      const key = e.key.toLowerCase();
+      if ((key === 'n' || key === 'm') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        if (!e.repeat) jumpToFloor(key === 'n' ? 2 : 3, key === 'n' ? 'common' : 'uncommon');
+        return;
+      }
+      input.keys.add(key);
+      if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key) || e.code === 'ShiftLeft') e.preventDefault();
+      if (e.code === 'ShiftLeft' && !e.repeat) pressSprint();
+      if (!e.repeat && key === 'q') dash();
+      if (!e.repeat && key === 'e') usePotion();
+      if (key === ' ') attack();
+    }, true);
     window.addEventListener('keyup', (e) => { const key = e.key.toLowerCase(); input.keys.delete(key); if (e.code === 'ShiftLeft') releaseSprint(); }, true);
     window.addEventListener('blur', resetInput);
     document.addEventListener('visibilitychange', () => { if (document.hidden) resetInput(); });
@@ -123,6 +137,18 @@
   function pauseGame() { if (!game.running || game.paused) return; game.paused = true; stopLoop(); resetInput(); showScreen('pause-screen'); }
   function resumeGame() { if (!game.running || !game.paused) return; game.paused = false; game.last = performance.now(); showScreen('game-screen'); animationFrame = requestAnimationFrame(loop); }
   function returnToMenu() { game.running = false; game.paused = false; stopLoop(); resetInput(); showScreen('menu-screen'); }
+  function jumpToFloor(floor, tier) {
+    if (!game.running || game.paused) return;
+    resetInput();
+    game.inventory = { weapon: null, armor: { chest: null, legs: null, helmet: null } };
+    ITEM_TIERS[tier].forEach((item) => {
+      const equipped = { ...item, tier };
+      if (item.slot === 'weapon') game.inventory.weapon = equipped;
+      else game.inventory.armor[item.slot] = equipped;
+    });
+    beginFloor(floor);
+    toast(`Testing: ${game.theme.name.toLowerCase()} with full ${tier} gear.`);
+  }
   function seededRandom(seed) { let value = seed >>> 0; return () => { value += 0x6D2B79F5; let t = value; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
   function generateMap(floor) {
     const random = seededRandom((game.runSeed + floor * 1777) >>> 0);

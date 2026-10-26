@@ -171,6 +171,51 @@ function kingFight() {
   return { g, king };
 }
 
+test('N and M jump to the requested floor with complete matching gear and restored health', () => {
+  const g = loadGame();
+  g.startGame();
+  const down = g.listeners.get('window:keydown');
+  for (const [key, floor, tier, weapon, hp] of [
+    ['n', 2, 'common', 'WOOD BAT', 130],
+    ['m', 3, 'uncommon', 'BRONZE SWORD', 160],
+    ['N', 2, 'common', 'WOOD BAT', 130]
+  ]) {
+    g.game.player.hp = 1;
+    g.game.player.stamina = 0;
+    g.input.keys.add('w');
+    g.input.sprint = true;
+    g.completeBoss();
+    down({ key, repeat: false, preventDefault() {} });
+    assert.equal(g.game.floor, floor);
+    assert.equal(g.game.player.weapon.name, weapon);
+    for (const item of [g.game.inventory.weapon, ...Object.values(g.game.inventory.armor)]) {
+      assert.equal(item.tier, tier);
+    }
+    assert.equal(g.game.player.hp, hp);
+    assert.equal(g.game.player.maxHp, hp);
+    assert.equal(g.game.player.stamina, 100);
+    assert.equal(g.input.keys.size, 0);
+    assert.equal(g.input.sprint, false);
+    assert.equal(g.game.floorAdvanceQueued, false);
+    assert.equal(g.frames.size, 1);
+    assert.ok(g.game.enemies.some((enemy) => enemy.boss));
+    assert.equal(g.node('weapon-readout').textContent, weapon);
+  }
+});
+
+test('floor jump shortcuts ignore key repeats, modifier combinations, and paused games', () => {
+  const g = loadGame();
+  g.startGame();
+  const down = g.listeners.get('window:keydown');
+  for (const extra of [{ repeat: true }, { ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
+    down({ key: 'm', repeat: false, preventDefault() {}, ...extra });
+    assert.equal(g.game.floor, 1);
+  }
+  g.pauseGame();
+  down({ key: 'n', repeat: false, preventDefault() {} });
+  assert.equal(g.game.floor, 1);
+});
+
 test('king detects outside his hitbox, visibly winds up for a full second, and commits after retreat', () => {
   const { g, king } = kingFight();
   g.updateEnemy(king, .016);
