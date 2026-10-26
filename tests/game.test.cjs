@@ -216,49 +216,65 @@ test('floor jump shortcuts ignore key repeats, modifier combinations, and paused
   assert.equal(g.game.floor, 1);
 });
 
-test('king detects outside his hitbox, visibly winds up for a full second, and commits after retreat', () => {
+test('king detects outside his hitbox, winds up for 0.75 seconds, and commits after retreat', () => {
   const { g, king } = kingFight();
   g.updateEnemy(king, .016);
-  assert.equal(king.kingWindup, 1);
+  assert.equal(king.kingWindup, .75);
   assert.equal(king.x, 10);
   g.drawEnemy(king, 32, 0, 0);
   g.game.player.x = 16;
-  g.updateEnemy(king, .99);
+  g.updateEnemy(king, .74);
   assert.ok(king.kingWindup > 0);
   assert.equal(king.slash, 0);
   g.updateEnemy(king, .011);
   assert.equal(king.kingWindup, 0);
   assert.equal(king.slash, .38);
-  assert.equal(king.attackCooldown, 5);
+  assert.equal(king.attackCooldown, 2.5);
   assert.equal(king.x, 10);
   assert.equal(g.game.player.hp, 100);
 });
 
-test('king hits once after windup, then waits five seconds before winding up again', () => {
+test('king hits once after windup, then waits 2.5 seconds before winding up again', () => {
   const { g, king } = kingFight();
   g.game.player.x = 11;
   g.updateEnemy(king, .016);
   assert.equal(g.game.player.hp, 100);
-  g.updateEnemy(king, .99);
+  g.updateEnemy(king, .74);
   assert.equal(g.game.player.hp, 100);
   g.updateEnemy(king, .011);
   assert.equal(g.game.player.hp, 40);
-  for (let i = 0; i < 49; i++) g.updateEnemy(king, .1);
+  for (let i = 0; i < 24; i++) g.updateEnemy(king, .1);
   assert.equal(king.kingWindup, 0);
   assert.equal(g.game.player.hp, 40);
   g.updateEnemy(king, .11);
-  assert.equal(king.kingWindup, 1);
+  assert.equal(king.kingWindup, .75);
   assert.equal(g.game.player.hp, 40);
 });
 
-test('king locks his aim so players can sidestep the marked slash', () => {
+test('king locks his aim so players can dodge behind the marked slash', () => {
   const { g, king } = kingFight();
   g.updateEnemy(king, .016);
-  Object.assign(g.game.player, { x: 10, y: 11 });
-  g.updateEnemy(king, 1);
+  Object.assign(g.game.player, { x: 9, y: 11 });
+  g.updateEnemy(king, .75);
   assert.equal(king.facingX, 1);
   assert.equal(king.facingY, 0);
   assert.equal(king.slash, .38);
   assert.equal(g.game.player.hp, 100);
   g.drawEnemy(king, 32, 0, 0);
+});
+
+test('king slash reaches 2.3 tiles across a full forward semicircle', () => {
+  for (const [x, y, expectedHp] of [
+    [12.2, 10, 40], // Increased reach in front.
+    [10, 12.2, 40], // Both perpendicular edges are inside the 180-degree arc.
+    [10, 7.8, 40],
+    [9.9, 12.1, 100], // Behind the king remains safe.
+    [12.4, 10, 100] // Outside the increased reach remains safe.
+  ]) {
+    const { g, king } = kingFight();
+    g.updateEnemy(king, .016);
+    Object.assign(g.game.player, { x, y });
+    g.updateEnemy(king, .75);
+    assert.equal(g.game.player.hp, expectedHp, `player at ${x}, ${y}`);
+  }
 });

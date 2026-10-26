@@ -19,10 +19,10 @@
   const PLAYER_LIGHT_RADIUS = 1.45;
   const PLAYER_CELL_RADIUS = 1;
   const KING_DETECT_RANGE = 4;
-  const KING_SLASH_RANGE = 2;
-  const KING_SLASH_ARC = .8;
-  const KING_WINDUP = 1;
-  const KING_COOLDOWN = 5;
+  const KING_SLASH_RANGE = 2.3;
+  const KING_SLASH_ARC = Math.PI / 2;
+  const KING_WINDUP = .75;
+  const KING_COOLDOWN = 2.5;
   const FLOOR_THEMES = [
     { name: 'CAVES', palette: { void: '#111214', floor: '#686a69', floorAlt: '#737573', wall: '#2a2d2f', wallTop: '#2a2d2f', grout: '#202225', player: '#ccd1c8', playerLight: '#f0eee4', enemy: '#80726a', boss: '#596665', bossLight: '#9ca99d', chest: '#ab8c55', accent: '#c0a86c' } },
     { name: 'DUNGEON', palette: { void: '#11100f', floor: '#414342', floorAlt: '#4b4d4b', wall: '#2f221e', wallTop: '#2f221e', grout: '#241a17', player: '#c4cbc3', playerLight: '#f1ead7', enemy: '#7d695a', boss: '#5e4540', bossLight: '#b28c69', chest: '#a67c48', accent: '#b7a270' } },
@@ -275,7 +275,7 @@
           enemy.kingWindup = 0;
           enemy.slash = .38;
           enemy.attackCooldown = KING_COOLDOWN;
-          const inArc = dist === 0 || (dx * enemy.facingX + dy * enemy.facingY) / dist >= Math.cos(KING_SLASH_ARC);
+          const inArc = dist === 0 || (dx * enemy.facingX + dy * enemy.facingY) / dist >= Math.cos(KING_SLASH_ARC) - 1e-10;
           if (dist < KING_SLASH_RANGE && inArc && p.invincible <= 0) {
             p.hp = Math.max(0, p.hp - enemy.damage);
             game.shake = settings.shake ? .24 : 0;
@@ -522,7 +522,7 @@
         ctx.fillStyle = '#d0aa58'; ctx.beginPath();
         ctx.moveTo(-r * .5, -r * 1.02); ctx.lineTo(-r * .3, -r * 1.35); ctx.lineTo(0, -r * 1.08); ctx.lineTo(r * .28, -r * 1.35); ctx.lineTo(r * .5, -r * 1.02); ctx.closePath(); ctx.fill();
         const swingProgress = enemy.slash > 0 ? 1 - enemy.slash / .38 : 0;
-        const swordOffset = windingUp ? -.8 - windupProgress * .6 : enemy.slash > 0 ? -KING_SLASH_ARC + swingProgress * KING_SLASH_ARC * 2 : 0;
+        const swordOffset = windingUp ? -KING_SLASH_ARC - windupProgress * .6 : enemy.slash > 0 ? -KING_SLASH_ARC + swingProgress * KING_SLASH_ARC * 2 : 0;
         ctx.save(); ctx.rotate(swordAngle + swordOffset);
         ctx.strokeStyle = windingUp ? '#ffcc80' : enemy.slash > 0 ? '#ead69a' : '#aaa89d';
         ctx.lineWidth = Math.max(2, tile * .07);
