@@ -18,6 +18,11 @@
   // shadow wedges. Farther cells still use the full raycast mask.
   const PLAYER_LIGHT_RADIUS = 1.45;
   const PLAYER_CELL_RADIUS = 1;
+  const KING_DETECT_RANGE = 4;
+  const KING_SLASH_RANGE = 2;
+  const KING_SLASH_ARC = .8;
+  const KING_WINDUP = 1;
+  const KING_COOLDOWN = 5;
   const FLOOR_THEMES = [
     { name: 'CAVES', palette: { void: '#111214', floor: '#686a69', floorAlt: '#737573', wall: '#2a2d2f', wallTop: '#2a2d2f', grout: '#202225', player: '#ccd1c8', playerLight: '#f0eee4', enemy: '#80726a', boss: '#596665', bossLight: '#9ca99d', chest: '#ab8c55', accent: '#c0a86c' } },
     { name: 'DUNGEON', palette: { void: '#11100f', floor: '#414342', floorAlt: '#4b4d4b', wall: '#2f221e', wallTop: '#2f221e', grout: '#241a17', player: '#c4cbc3', playerLight: '#f1ead7', enemy: '#7d695a', boss: '#5e4540', bossLight: '#b28c69', chest: '#a67c48', accent: '#b7a270' } },
@@ -165,7 +170,7 @@
     $('floor-name').textContent = game.theme.name; $('floor-number').textContent = String(floor).padStart(2, '0'); $('objective-text').textContent = `Defeat the ${game.profile.boss.name.toLowerCase()} to continue.`; $('boss-alert').classList.add('hidden'); updateHud();
   }
   function armorBonus() { return Object.values(game.inventory.armor).reduce((total, item) => total + (item?.armor || 0), 0); }
-  function createEnemy(profile, x, y, extra = {}) { return { ...profile, ...extra, x, y, hp: profile.hp, maxHp: profile.hp, attackCooldown: Math.random() * 1.2, healTimer: profile.kind === 'king' ? 30 + Math.random() * 10 : 0, kingWindup: 0, slash: 0, summonTimer: profile.kind === 'warden' ? 0 : extra.summonTimer, initialGuardsSpawned: false, facingX: 1, facingY: 0, hitFlash: 0, phase: Math.random() * TAU }; }
+  function createEnemy(profile, x, y, extra = {}) { return { ...profile, ...extra, x, y, hp: profile.hp, maxHp: profile.hp, attackCooldown: profile.kind === 'king' ? 0 : Math.random() * 1.2, healTimer: profile.kind === 'king' ? 30 + Math.random() * 10 : 0, kingWindup: 0, slash: 0, summonTimer: profile.kind === 'warden' ? 0 : extra.summonTimer, initialGuardsSpawned: false, facingX: 1, facingY: 0, hitFlash: 0, phase: Math.random() * TAU }; }
   function resizeCanvas() { const rect = canvas.getBoundingClientRect(); const dpr = Math.min(window.devicePixelRatio || 1, 2); canvas.width = Math.max(1, Math.floor(rect.width * dpr)); canvas.height = Math.max(1, Math.floor(rect.height * dpr)); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
   function screenSize() { const rect = canvas.getBoundingClientRect(); return { w: rect.width, h: rect.height }; }
   function tileMetrics() { const { w, h } = screenSize(); const tile = Math.min(w / VIEW_W, h / VIEW_H) * ZOOM; const cameraX = game.player?.x ?? WORLD_W / 2; const cameraY = game.player?.y ?? WORLD_H / 2; return { tile, ox: w / 2 - cameraX * tile, oy: h / 2 - cameraY * tile }; }
@@ -226,23 +231,26 @@
     game.particles.forEach((particle) => { particle.life -= dt; particle.x += particle.vx * dt; particle.y += particle.vy * dt; particle.vx *= .96; particle.vy *= .96; }); game.particles = game.particles.filter((particle) => particle.life > 0); updateHud();
   }
   function updateEnemy(enemy, dt) {
-    if (enemy.hp <= 0) return; enemy.hitFlash = Math.max(0, enemy.hitFlash - dt); enemy.slash = Math.max(0, enemy.slash - dt); enemy.attackCooldown -= dt; const p = game.player; const dx = p.x - enemy.x, dy = p.y - enemy.y, dist = Math.hypot(dx, dy); if (dist > 0) { enemy.facingX = dx / dist; enemy.facingY = dy / dist; } const aggro = enemy.boss ? 12 : 6.5;
+    if (enemy.hp <= 0) return; enemy.hitFlash = Math.max(0, enemy.hitFlash - dt); enemy.slash = Math.max(0, enemy.slash - dt); enemy.attackCooldown -= dt; const p = game.player; const dx = p.x - enemy.x, dy = p.y - enemy.y, dist = Math.hypot(dx, dy);
+    const kingCommitted = enemy.kind === 'king' && (enemy.kingWindup > 0 || enemy.slash > 0);
+    if (dist > 0 && !kingCommitted) { enemy.facingX = dx / dist; enemy.facingY = dy / dist; } const aggro = enemy.boss ? 12 : 6.5;
     if (enemy.kind === 'warden' && dist <= 10) {
       if (!enemy.initialGuardsSpawned) { summonGuards(enemy, 5, false); enemy.initialGuardsSpawned = true; enemy.summonTimer = 10 + Math.random() * 5; }
       else { enemy.summonTimer -= dt; if (enemy.summonTimer <= 0) { summonGuards(enemy); enemy.summonTimer = 10 + Math.random() * 5; } }
     }
     if (enemy.kind === 'king') { enemy.healTimer -= dt; if (enemy.healTimer <= 0) { const healed = Math.min(50, enemy.maxHp - enemy.hp); enemy.hp += healed; enemy.healTimer = 30 + Math.random() * 10; if (healed > 0) { burst(enemy.x, enemy.y, game.theme.palette.bossLight, 18); toast(`The king recovered ${healed} health.`); tone(380, .16, 'sine'); } } }
-    const stopDistance = enemy.kind === 'giant-slime' || enemy.kind === 'slime' ? .45 : enemy.boss ? 1.35 : .8; if (dist < aggro && dist > stopDistance) { const speed = enemy.boss ? .63 : enemy.kind === 'knight' || enemy.kind === 'prisoner' ? .72 : enemy.kind === 'bat' ? 1.15 : .9; tryMove(enemy, dx / dist * speed * dt, dy / dist * speed * dt, enemy.boss ? .38 : .25); }
+    const kingStartingWindup = enemy.kind === 'king' && dist <= KING_DETECT_RANGE && enemy.attackCooldown <= 0;
+    const stopDistance = enemy.kind === 'giant-slime' || enemy.kind === 'slime' ? .45 : enemy.boss ? 1.35 : .8; if (!kingCommitted && !kingStartingWindup && dist < aggro && dist > stopDistance) { const speed = enemy.boss ? .63 : enemy.kind === 'knight' || enemy.kind === 'prisoner' ? .72 : enemy.kind === 'bat' ? 1.15 : .9; tryMove(enemy, dx / dist * speed * dt, dy / dist * speed * dt, enemy.boss ? .38 : .25); }
     if (enemy.kind === 'warden') return;
     if (enemy.kind === 'king') {
       if (enemy.kingWindup > 0) {
-        if (dist > 4) { enemy.kingWindup = 0; return; }
         enemy.kingWindup -= dt;
         if (enemy.kingWindup <= 0) {
           enemy.kingWindup = 0;
           enemy.slash = .38;
-          enemy.attackCooldown = 6;
-          if (dist < 2 && p.invincible <= 0) {
+          enemy.attackCooldown = KING_COOLDOWN;
+          const inArc = dist === 0 || (dx * enemy.facingX + dy * enemy.facingY) / dist >= Math.cos(KING_SLASH_ARC);
+          if (dist < KING_SLASH_RANGE && inArc && p.invincible <= 0) {
             p.hp = Math.max(0, p.hp - enemy.damage);
             game.shake = settings.shake ? .24 : 0;
             game.flash = settings.flashes ? .06 : 0;
@@ -251,8 +259,9 @@
             if (p.hp <= 0) endRun(false, 'You fainted');
           }
         }
-      } else if (dist <= 4 && enemy.attackCooldown <= 0) {
-        enemy.kingWindup = 1;
+      } else if (kingStartingWindup && !kingCommitted) {
+        // Commit to this position and direction, even if the player retreats.
+        enemy.kingWindup = KING_WINDUP;
       }
       return;
     }
@@ -465,7 +474,36 @@
     } else if (enemy.kind === 'giant-slime' || enemy.kind === 'slime') {
       ctx.shadowColor = palette.bossLight; ctx.shadowBlur = tile * (enemy.boss ? .22 : .1); ctx.fillStyle = enemy.hitFlash ? palette.playerLight : palette.boss; ctx.beginPath(); ctx.moveTo(-r, r * .45); ctx.quadraticCurveTo(-r * 1.15, -r * .1, -r * .55, -r * .62); ctx.quadraticCurveTo(0, -r * 1.05, r * .55, -r * .62); ctx.quadraticCurveTo(r * 1.15, -r * .1, r, r * .45); ctx.quadraticCurveTo(0, r * 1.02, -r, r * .45); ctx.fill(); ctx.shadowBlur = 0; ctx.strokeStyle = palette.bossLight; ctx.lineWidth = Math.max(2, tile * .05); ctx.stroke(); ctx.fillStyle = ink; ctx.beginPath(); ctx.arc(-r * .3, -r * .08, r * .1, 0, TAU); ctx.arc(r * .3, -r * .08, r * .1, 0, TAU); ctx.fill();
     } else if (enemy.kind === 'warden' || enemy.kind === 'king') {
-      ctx.fillStyle = enemy.kind === 'king' ? '#7d4c4e' : palette.boss; ctx.fillRect(-r * .68, -r * .02, r * 1.36, r * 1.25); ctx.fillStyle = enemy.kind === 'king' ? '#d0aa58' : '#6d7672'; ctx.beginPath(); ctx.arc(0, -r * .6, r * .56, 0, TAU); ctx.fill(); ctx.fillStyle = ink; ctx.fillRect(-r * .23, -r * .64, r * .13, r * .1); ctx.fillRect(r * .1, -r * .64, r * .13, r * .1); if (enemy.kind === 'king') { ctx.fillStyle = '#d0aa58'; ctx.beginPath(); ctx.moveTo(-r * .5, -r * 1.02); ctx.lineTo(-r * .3, -r * 1.35); ctx.lineTo(0, -r * 1.08); ctx.lineTo(r * .28, -r * 1.35); ctx.lineTo(r * .5, -r * 1.02); ctx.closePath(); ctx.fill(); const swordAngle = Math.atan2(enemy.facingY, enemy.facingX); ctx.save(); ctx.rotate(swordAngle); ctx.strokeStyle = enemy.slash > 0 ? '#ead69a' : '#aaa89d'; ctx.lineWidth = Math.max(2, tile * .07); ctx.beginPath(); ctx.moveTo(r * .35, 0); ctx.lineTo(r * 1.65, 0); ctx.stroke(); ctx.strokeStyle = '#d0aa58'; ctx.lineWidth = Math.max(2, tile * .1); ctx.beginPath(); ctx.moveTo(r * .34, -r * .22); ctx.lineTo(r * .34, r * .22); ctx.stroke(); if (enemy.slash > 0) { ctx.strokeStyle = `rgba(234,214,154,${enemy.slash / .34})`; ctx.lineWidth = Math.max(2, tile * .09); ctx.beginPath(); ctx.arc(0, 0, r * 1.75, -.7, .7); ctx.stroke(); } ctx.restore(); }
+      const windingUp = enemy.kind === 'king' && enemy.kingWindup > 0;
+      const windupProgress = windingUp ? 1 - enemy.kingWindup / KING_WINDUP : 0;
+      const swordAngle = Math.atan2(enemy.facingY, enemy.facingX);
+      if (windingUp || enemy.slash > 0) {
+        // The ground warning and slash show the actual damage range and arc.
+        ctx.save(); ctx.rotate(swordAngle);
+        ctx.fillStyle = windingUp ? `rgba(231,155,74,${.14 + windupProgress * .18})` : 'rgba(234,214,154,.3)';
+        ctx.strokeStyle = windingUp ? '#e79b4a' : '#ead69a';
+        ctx.lineWidth = Math.max(2, tile * .05);
+        ctx.beginPath(); ctx.moveTo(0, 0);
+        ctx.arc(0, 0, tile * KING_SLASH_RANGE, -KING_SLASH_ARC, KING_SLASH_ARC);
+        ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+      }
+      ctx.fillStyle = enemy.kind === 'king' ? '#7d4c4e' : palette.boss;
+      ctx.fillRect(-r * .68, -r * .02, r * 1.36, r * 1.25);
+      ctx.fillStyle = enemy.kind === 'king' ? '#d0aa58' : '#6d7672';
+      ctx.beginPath(); ctx.arc(0, -r * .6, r * .56, 0, TAU); ctx.fill();
+      ctx.fillStyle = ink; ctx.fillRect(-r * .23, -r * .64, r * .13, r * .1); ctx.fillRect(r * .1, -r * .64, r * .13, r * .1);
+      if (enemy.kind === 'king') {
+        ctx.fillStyle = '#d0aa58'; ctx.beginPath();
+        ctx.moveTo(-r * .5, -r * 1.02); ctx.lineTo(-r * .3, -r * 1.35); ctx.lineTo(0, -r * 1.08); ctx.lineTo(r * .28, -r * 1.35); ctx.lineTo(r * .5, -r * 1.02); ctx.closePath(); ctx.fill();
+        const swingProgress = enemy.slash > 0 ? 1 - enemy.slash / .38 : 0;
+        const swordOffset = windingUp ? -.8 - windupProgress * .6 : enemy.slash > 0 ? -KING_SLASH_ARC + swingProgress * KING_SLASH_ARC * 2 : 0;
+        ctx.save(); ctx.rotate(swordAngle + swordOffset);
+        ctx.strokeStyle = windingUp ? '#ffcc80' : enemy.slash > 0 ? '#ead69a' : '#aaa89d';
+        ctx.lineWidth = Math.max(2, tile * .07);
+        ctx.beginPath(); ctx.moveTo(r * .35, 0); ctx.lineTo(r * 1.65, 0); ctx.stroke();
+        ctx.strokeStyle = '#d0aa58'; ctx.lineWidth = Math.max(2, tile * .1);
+        ctx.beginPath(); ctx.moveTo(r * .34, -r * .22); ctx.lineTo(r * .34, r * .22); ctx.stroke(); ctx.restore();
+      }
     } else { ctx.fillStyle = cloth; ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill(); }
     ctx.restore(); drawBar(enemy, s.x, s.y - tile * (enemy.boss ? .86 : .55), tile * (enemy.boss ? 1.3 : .7));
   }

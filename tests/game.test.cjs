@@ -33,7 +33,7 @@ function loadGame() {
     clearTimeout(id) { timers.delete(id); }
   });
   const source = fs.readFileSync(path.join(__dirname, '..', 'game.js'), 'utf8');
-  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `globalThis.api = { game, input, settings, startGame, pauseGame, resumeGame, returnToMenu, completeBoss, update, attack, dash, usePotion, generateMap, endRun }; })();`), context);
+  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `globalThis.api = { game, input, settings, startGame, pauseGame, resumeGame, returnToMenu, completeBoss, update, attack, dash, usePotion, generateMap, endRun, createEnemy, updateEnemy, drawEnemy }; })();`), context);
   return { ...context.api, frames, timers, listeners, document, node };
 }
 
@@ -159,4 +159,61 @@ test('generated maps connect the start, boss, chests, and enemies on every floor
       assert.ok(visited.has(`${Math.floor(point.x)},${Math.floor(point.y)}`), `seed ${seed}, floor ${floor}`);
     }
   }
+});
+
+function kingFight() {
+  const g = loadGame();
+  g.startGame();
+  g.game.map = Array.from({ length: 45 }, () => Array(69).fill('.'));
+  Object.assign(g.game.player, { x: 13, y: 10 });
+  const king = g.createEnemy({ kind: 'king', hp: 750, damage: 60 }, 10, 10, { boss: true });
+  g.game.enemies = [king];
+  return { g, king };
+}
+
+test('king detects outside his hitbox, visibly winds up for a full second, and commits after retreat', () => {
+  const { g, king } = kingFight();
+  g.updateEnemy(king, .016);
+  assert.equal(king.kingWindup, 1);
+  assert.equal(king.x, 10);
+  g.drawEnemy(king, 32, 0, 0);
+  g.game.player.x = 16;
+  g.updateEnemy(king, .99);
+  assert.ok(king.kingWindup > 0);
+  assert.equal(king.slash, 0);
+  g.updateEnemy(king, .011);
+  assert.equal(king.kingWindup, 0);
+  assert.equal(king.slash, .38);
+  assert.equal(king.attackCooldown, 5);
+  assert.equal(king.x, 10);
+  assert.equal(g.game.player.hp, 100);
+});
+
+test('king hits once after windup, then waits five seconds before winding up again', () => {
+  const { g, king } = kingFight();
+  g.game.player.x = 11;
+  g.updateEnemy(king, .016);
+  assert.equal(g.game.player.hp, 100);
+  g.updateEnemy(king, .99);
+  assert.equal(g.game.player.hp, 100);
+  g.updateEnemy(king, .011);
+  assert.equal(g.game.player.hp, 40);
+  for (let i = 0; i < 49; i++) g.updateEnemy(king, .1);
+  assert.equal(king.kingWindup, 0);
+  assert.equal(g.game.player.hp, 40);
+  g.updateEnemy(king, .11);
+  assert.equal(king.kingWindup, 1);
+  assert.equal(g.game.player.hp, 40);
+});
+
+test('king locks his aim so players can sidestep the marked slash', () => {
+  const { g, king } = kingFight();
+  g.updateEnemy(king, .016);
+  Object.assign(g.game.player, { x: 10, y: 11 });
+  g.updateEnemy(king, 1);
+  assert.equal(king.facingX, 1);
+  assert.equal(king.facingY, 0);
+  assert.equal(king.slash, .38);
+  assert.equal(g.game.player.hp, 100);
+  g.drawEnemy(king, 32, 0, 0);
 });
