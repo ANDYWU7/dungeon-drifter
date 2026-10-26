@@ -40,6 +40,7 @@
   const input = { keys: new Set(), joystick: { active: false, x: 0, y: 0 }, sprint: false };
   const game = { running: false, paused: false, runSeed: 0, last: 0, floor: 1, theme: FLOOR_THEMES[0], profile: FLOOR_PROFILES[0], map: [], mapWidth: WORLD_W, mapHeight: WORLD_H, player: null, bossPosition: null, enemies: [], chests: [], particles: [], visibleCells: new Set(), inventory: { weapon: null, armor: { chest: null, legs: null, helmet: null } }, slash: 0, shake: 0, flash: 0, elapsed: 0, gold: 0, toastTimer: 0, bossAlerted: false, bossDefeated: false, bossFamilyActive: false, floorAdvanceQueued: false, audio: null };
   let audioContext;
+  let animationFrame = 0;
 
   function saveSettings() { try { localStorage.setItem(settingsKey, JSON.stringify(settings)); } catch { /* private mode */ } }
   function showScreen(id) { document.querySelectorAll('.screen').forEach((node) => node.classList.add('hidden')); $(id).classList.remove('hidden'); }
@@ -57,6 +58,12 @@
   function pressSprint() { if (settings.holdSprint) setSprint(true); else setSprint(!input.sprint); }
   function releaseSprint() { if (settings.holdSprint) setSprint(false); }
   function resetSprint() { setSprint(false); }
+  function resetInput() {
+    resetSprint(); input.keys.clear();
+    input.joystick.active = false; input.joystick.x = 0; input.joystick.y = 0;
+    $('joystick-knob').style.transform = 'translate(0, 0)';
+  }
+  function stopLoop() { cancelAnimationFrame(animationFrame); animationFrame = 0; }
   function setupUi() {
     initSettingsUi();
     $('play-button').addEventListener('click', startGame);
@@ -78,10 +85,10 @@
     $('sprint-button').addEventListener('pointerdown', (e) => { e.preventDefault(); $('sprint-button').setPointerCapture(e.pointerId); pressSprint(); });
     ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((eventName) => $('sprint-button').addEventListener(eventName, releaseSprint));
     setupJoystick();
-    window.addEventListener('keydown', (e) => { const key = e.key.toLowerCase(); input.keys.add(key); if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key) || e.code === 'ShiftLeft') e.preventDefault(); if (e.code === 'ShiftLeft' && !e.repeat) pressSprint(); if (!e.repeat && key === 'q' && game.running && !game.paused) dash(); if (!e.repeat && key === 'e' && game.running && !game.paused) usePotion(); if (key === ' ' && game.running && !game.paused) attack(); }, true);
+    window.addEventListener('keydown', (e) => { if (!game.running || game.paused) return; const key = e.key.toLowerCase(); input.keys.add(key); if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key) || e.code === 'ShiftLeft') e.preventDefault(); if (e.code === 'ShiftLeft' && !e.repeat) pressSprint(); if (!e.repeat && key === 'q') dash(); if (!e.repeat && key === 'e') usePotion(); if (key === ' ') attack(); }, true);
     window.addEventListener('keyup', (e) => { const key = e.key.toLowerCase(); input.keys.delete(key); if (e.code === 'ShiftLeft') releaseSprint(); }, true);
-    window.addEventListener('blur', resetSprint);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) resetSprint(); });
+    window.addEventListener('blur', resetInput);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) resetInput(); });
     window.addEventListener('resize', resizeCanvas);
   }
   function setupJoystick() {
@@ -104,12 +111,13 @@
 
   function startGame() {
     ensureAudio();
-    game.running = true; game.paused = false; game.runSeed = Math.floor(Math.random() * 4294967296) >>> 0; game.floor = 1; game.gold = 0; game.inventory = { weapon: null, armor: { chest: null, legs: null, helmet: null } }; game.player = null; game.elapsed = 0; game.last = performance.now(); game.shake = 0; game.flash = 0; resetSprint(); input.joystick.active = false; input.joystick.x = 0; input.joystick.y = 0;
-    beginFloor(1); showScreen('game-screen'); resizeCanvas(); toast('The dungeon is ready.'); requestAnimationFrame(loop); tone(220, .08, 'sine');
+    stopLoop(); resetInput();
+    game.running = true; game.paused = false; game.runSeed = Math.floor(Math.random() * 4294967296) >>> 0; game.floor = 1; game.gold = 0; game.inventory = { weapon: null, armor: { chest: null, legs: null, helmet: null } }; game.player = null; game.elapsed = 0; game.last = performance.now(); game.shake = 0; game.flash = 0;
+    beginFloor(1); showScreen('game-screen'); resizeCanvas(); toast('The dungeon is ready.'); animationFrame = requestAnimationFrame(loop); tone(220, .08, 'sine');
   }
-  function pauseGame() { if (!game.running || game.paused) return; game.paused = true; resetSprint(); showScreen('pause-screen'); }
-  function resumeGame() { if (!game.running || !game.paused) return; game.paused = false; game.last = performance.now(); showScreen('game-screen'); requestAnimationFrame(loop); }
-  function returnToMenu() { game.running = false; game.paused = false; resetSprint(); input.joystick.active = false; input.joystick.x = 0; input.joystick.y = 0; showScreen('menu-screen'); }
+  function pauseGame() { if (!game.running || game.paused) return; game.paused = true; stopLoop(); resetInput(); showScreen('pause-screen'); }
+  function resumeGame() { if (!game.running || !game.paused) return; game.paused = false; game.last = performance.now(); showScreen('game-screen'); animationFrame = requestAnimationFrame(loop); }
+  function returnToMenu() { game.running = false; game.paused = false; stopLoop(); resetInput(); showScreen('menu-screen'); }
   function seededRandom(seed) { let value = seed >>> 0; return () => { value += 0x6D2B79F5; let t = value; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
   function generateMap(floor) {
     const random = seededRandom((game.runSeed + floor * 1777) >>> 0);
@@ -153,7 +161,7 @@
     game.enemies = generated.spawns.map((spawn, i) => createEnemy(spawn.role === 'heavy' ? game.profile.heavy : game.profile.light, spawn.x, spawn.y, { id: `enemy-${floor}-${i}` }));
     game.enemies.push(createEnemy(game.profile.boss, game.bossPosition.x, game.bossPosition.y, { id: `boss-${floor}`, boss: true, bossFamily: true, summonTimer: 10 + Math.random() * 5 }));
     game.chests = generated.chests;
-    game.particles = []; game.visibleCells.clear(); game.slash = 0; game.bossAlerted = false; game.bossDefeated = false; game.bossFamilyActive = false; game.floorAdvanceQueued = false;
+    game.particles = []; game.visibleCells.clear(); game.slash = 0; game.bossAlerted = false; game.bossDefeated = false; game.bossFamilyActive = false; game.floorAdvanceQueued = false; game.floorAdvanceDelay = 0;
     $('floor-name').textContent = game.theme.name; $('floor-number').textContent = String(floor).padStart(2, '0'); $('objective-text').textContent = `Defeat the ${game.profile.boss.name.toLowerCase()} to continue.`; $('boss-alert').classList.add('hidden'); updateHud();
   }
   function armorBonus() { return Object.values(game.inventory.armor).reduce((total, item) => total + (item?.armor || 0), 0); }
@@ -171,14 +179,14 @@
     const mag = Math.hypot(x, y); return mag > 1 ? { x: x / mag, y: y / mag, mag: 1 } : { x, y, mag };
   }
   function attack() {
-    if (!game.running || game.player.dashTime > 0 || game.player.attackCooldown > 0) return;
+    if (!game.running || game.paused || game.player.dashTime > 0 || game.player.attackCooldown > 0) return;
     game.player.attackCooldown = .5; game.slash = .22; const p = game.player; const dir = Math.hypot(p.facingX, p.facingY) || 1; const fx = p.facingX / dir; const fy = p.facingY / dir; const damage = p.weapon?.damage ?? 10;
     let hit = false;
     game.enemies.forEach((enemy) => { const dx = enemy.x - p.x, dy = enemy.y - p.y, dist = Math.hypot(dx, dy); const dot = (dx * fx + dy * fy) / (dist || 1); if (dist < (enemy.boss ? 1.65 : 1.35) && dot > -.12) { enemy.hp -= damage; enemy.hitFlash = .14; hit = true; burst(enemy.x, enemy.y, enemy.boss ? game.theme.palette.bossLight : game.theme.palette.accent, 8); if (enemy.hp <= 0) defeatEnemy(enemy); } });
     game.enemies = game.enemies.filter((enemy) => enemy.hp > 0); if (game.bossFamilyActive && !game.enemies.some((enemy) => enemy.bossFamily)) completeBoss(); if (hit) { game.shake = settings.shake ? .16 : 0; game.flash = settings.flashes ? .06 : 0; tone(120, .09, 'square'); } else tone(240, .04, 'triangle');
   }
-  function dash() { if (!game.running || game.player.stamina < 28 || game.player.dashTime > 0) return; const d = direction(); const dx = d.mag ? d.x : game.player.facingX; const dy = d.mag ? d.y : game.player.facingY; game.player.stamina -= 28; game.player.dashTime = .18; game.player.dashX = dx; game.player.dashY = dy; game.player.invincible = .28; burst(game.player.x, game.player.y, '#69d8cc', 7); tone(300, .08, 'sawtooth'); }
-  function usePotion() { const p = game.player; if (!game.running || p.potions <= 0 || p.hp >= p.maxHp) return; p.potions--; p.hp = Math.min(p.maxHp, p.hp + 38); burst(p.x, p.y, '#f2bd57', 12); toast('You used a potion and restored 38 health.'); tone(520, .15, 'sine'); updateHud(); }
+  function dash() { if (!game.running || game.paused || game.player.stamina < 28 || game.player.dashTime > 0) return; const d = direction(); const dx = d.mag ? d.x : game.player.facingX; const dy = d.mag ? d.y : game.player.facingY; game.player.stamina -= 28; game.player.dashTime = .18; game.player.dashX = dx; game.player.dashY = dy; game.player.invincible = .28; burst(game.player.x, game.player.y, '#69d8cc', 7); tone(300, .08, 'sawtooth'); }
+  function usePotion() { const p = game.player; if (!game.running || game.paused || p.potions <= 0 || p.hp >= p.maxHp) return; p.potions--; p.hp = Math.min(p.maxHp, p.hp + 38); burst(p.x, p.y, '#f2bd57', 12); toast('You used a potion and restored 38 health.'); tone(520, .15, 'sine'); updateHud(); }
   function awardGold(enemy) { const amount = enemy.goldMin + Math.floor(Math.random() * (enemy.goldMax - enemy.goldMin + 1)); game.gold += amount; return amount; }
   function defeatEnemy(enemy) {
     const gold = awardGold(enemy); burst(enemy.x, enemy.y, enemy.boss ? game.theme.palette.bossLight : game.theme.palette.accent, enemy.boss ? 28 : 8);
@@ -192,9 +200,20 @@
     [[-.65, 0], [.65, 0]].forEach(([offsetX, offsetY], index) => { const spot = findNearbyFloor(source.x + offsetX, source.y + offsetY); const profile = { kind: 'slime', name: 'SLIME', hp, damage: 10, goldMin: 5, goldMax: 15 }; game.enemies.push(createEnemy(profile, spot.x, spot.y, { id: `slime-${game.floor}-${splitLevel}-${index}-${Date.now()}`, splitLevel, bossFamily: true })); });
   }
   function findNearbyFloor(x, y) { const candidates = [[x, y], [x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1], [x + .7, y + .7], [x - .7, y - .7]]; const spot = candidates.find(([cx, cy]) => canMove(cx, cy, .18)); return spot ? { x: spot[0], y: spot[1] } : { x: game.player.x, y: game.player.y }; }
-  function completeBoss() { if (game.floorAdvanceQueued) return; game.bossDefeated = true; game.bossFamilyActive = false; game.floorAdvanceQueued = true; $('objective-text').textContent = 'The next floor is open.'; toast(`The ${game.profile.boss.name.toLowerCase()} was defeated.`); game.shake = settings.shake ? .45 : 0; game.flash = settings.flashes ? .16 : 0; tone(80, .3, 'sawtooth'); setTimeout(() => { if (game.running) { if (game.floor >= 3) endRun(true); else { beginFloor(game.floor + 1); toast(`The ${FLOOR_THEMES[game.floor - 1].name.toLowerCase()} floor begins.`); } } }, 1200); }
+  function completeBoss() { if (game.floorAdvanceQueued) return; game.bossDefeated = true; game.bossFamilyActive = false; game.floorAdvanceQueued = true; game.floorAdvanceDelay = 1.2; $('objective-text').textContent = 'The next floor is open.'; toast(`The ${game.profile.boss.name.toLowerCase()} was defeated.`); game.shake = settings.shake ? .45 : 0; game.flash = settings.flashes ? .16 : 0; tone(80, .3, 'sawtooth'); }
   function update(dt) {
-    if (!game.running) return; game.elapsed += dt; const p = game.player; p.invincible = Math.max(0, p.invincible - dt); p.dashTime = Math.max(0, p.dashTime - dt); p.attackCooldown = Math.max(0, p.attackCooldown - dt); game.slash = Math.max(0, game.slash - dt); game.shake = Math.max(0, game.shake - dt); game.flash = Math.max(0, game.flash - dt);
+    if (!game.running || game.paused) return;
+    game.elapsed += dt;
+    // Advance with game time so pausing and restarting also stop the delay.
+    if (game.floorAdvanceQueued) {
+      game.floorAdvanceDelay -= dt;
+      if (game.floorAdvanceDelay <= 0) {
+        if (game.floor >= 3) endRun(true);
+        else { beginFloor(game.floor + 1); toast(`The ${game.theme.name.toLowerCase()} floor begins.`); }
+        return;
+      }
+    }
+    const p = game.player; p.invincible = Math.max(0, p.invincible - dt); p.dashTime = Math.max(0, p.dashTime - dt); p.attackCooldown = Math.max(0, p.attackCooldown - dt); game.slash = Math.max(0, game.slash - dt); game.shake = Math.max(0, game.shake - dt); game.flash = Math.max(0, game.flash - dt);
     if (p.sprintExhausted && p.stamina >= p.maxStamina) p.sprintExhausted = false;
     const sprinting = input.sprint && !p.sprintExhausted && p.stamina > 0;
     const recoveryRate = 18 + (p.stamina / p.maxStamina) * 30;
@@ -454,10 +473,10 @@
   function drawPlayer(tile, ox, oy) { const p = game.player, s = worldToScreen(p.x, p.y), palette = game.theme.palette; ctx.save(); ctx.translate(s.x, s.y); if (p.invincible > 0) ctx.globalAlpha = .55 + Math.sin(performance.now() / 50) * .35; ctx.shadowColor = palette.player; ctx.shadowBlur = tile * .22; ctx.fillStyle = palette.player; ctx.beginPath(); ctx.arc(0, 0, tile * .3, 0, TAU); ctx.fill(); ctx.shadowBlur = 0; ctx.strokeStyle = palette.playerLight; ctx.lineWidth = Math.max(2, tile * .06); ctx.stroke(); ctx.fillStyle = palette.playerLight; ctx.beginPath(); ctx.moveTo(p.facingX * tile * .38, p.facingY * tile * .38); ctx.lineTo(p.facingX * tile * .08 - p.facingY * tile * .15, p.facingY * tile * .08 + p.facingX * tile * .15); ctx.lineTo(p.facingX * tile * .08 + p.facingY * tile * .15, p.facingY * tile * .08 - p.facingX * tile * .15); ctx.fill(); if (game.slash) { ctx.strokeStyle = `rgba(196,188,114,${game.slash / .22})`; ctx.lineWidth = tile * .12; ctx.beginPath(); ctx.arc(0, 0, tile * 1.1, Math.atan2(p.facingY, p.facingX) - .8, Math.atan2(p.facingY, p.facingX) + .8); ctx.stroke(); } ctx.restore(); }
   function updateHud() { if (!game.player) return; const p = game.player; const armor = game.inventory.armor; $('health-fill').style.width = `${Math.max(0, p.hp / p.maxHp) * 100}%`; $('stamina-fill').style.width = `${Math.max(0, p.stamina / p.maxStamina) * 100}%`; $('health-text').textContent = `${Math.ceil(p.hp)} / ${p.maxHp}`; $('potion-count').textContent = p.potions; $('gold-count').textContent = game.gold; $('weapon-readout').textContent = p.weapon?.name ?? 'UNARMED'; $('head-readout').textContent = armor.helmet?.name ?? 'NONE'; $('torso-readout').textContent = armor.chest?.name ?? 'NONE'; $('legs-readout').textContent = armor.legs?.name ?? 'NONE'; }
   function toast(message) { const node = $('game-toast'); node.textContent = message; node.classList.add('show'); clearTimeout(game.toastTimer); game.toastTimer = setTimeout(() => node.classList.remove('show'), 1800); }
-  function endRun(won, reason = 'The run ended') { if (!game.running) return; game.running = false; game.paused = false; resetSprint(); $('result-kicker').textContent = won ? 'You completed the run.' : 'The run ended.'; $('result-title').textContent = won ? 'Run complete' : 'Run ended'; $('result-copy').textContent = won ? 'You defeated the boss on every floor.' : `${reason}. You can start another run when you are ready.`; $('result-floor').textContent = String(game.floor).padStart(2, '0'); $('result-gold').textContent = game.gold; $('result-time').textContent = formatTime(game.elapsed); showScreen('result-screen'); tone(won ? 440 : 110, .22, won ? 'sine' : 'sawtooth'); }
+  function endRun(won, reason = 'The run ended') { if (!game.running) return; game.running = false; game.paused = false; stopLoop(); resetInput(); $('result-kicker').textContent = won ? 'You completed the run.' : 'The run ended.'; $('result-title').textContent = won ? 'Run complete' : 'Run ended'; $('result-copy').textContent = won ? 'You defeated the boss on every floor.' : `${reason}. You can start another run when you are ready.`; $('result-floor').textContent = String(game.floor).padStart(2, '0'); $('result-gold').textContent = game.gold; $('result-time').textContent = formatTime(game.elapsed); showScreen('result-screen'); tone(won ? 440 : 110, .22, won ? 'sine' : 'sawtooth'); }
   function ensureAudio() { if (!audioContext) { try { audioContext = new (window.AudioContext || window.webkitAudioContext)(); } catch { return; } } if (audioContext.state === 'suspended') audioContext.resume(); }
   function tone(freq, duration, type) { if (!audioContext || settings.volume <= 0) return; try { const osc = audioContext.createOscillator(); const gain = audioContext.createGain(); osc.type = type; osc.frequency.value = freq; gain.gain.setValueAtTime((settings.volume / 100) * .035, audioContext.currentTime); gain.gain.exponentialRampToValueAtTime(.0001, audioContext.currentTime + duration); osc.connect(gain).connect(audioContext.destination); osc.start(); osc.stop(audioContext.currentTime + duration); } catch { /* audio optional */ } }
-  function loop(now) { if (!game.running || game.paused) return; const dt = Math.min(.034, (now - game.last) / 1000 || .016); game.last = now; update(dt); render(); requestAnimationFrame(loop); }
+  function loop(now) { animationFrame = 0; if (!game.running || game.paused) return; const dt = Math.min(.034, (now - game.last) / 1000 || .016); game.last = now; update(dt); if (!game.running || game.paused) return; render(); animationFrame = requestAnimationFrame(loop); }
 
   setupUi(); resizeCanvas();
 })();
