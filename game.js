@@ -19,12 +19,12 @@
   const PLAYER_LIGHT_RADIUS = 1.45;
   const PLAYER_CELL_RADIUS = 1;
   const KING_DETECT_RANGE = 4;
-  const KING_SLASH_RANGE = 2.3;
+  const KING_SLASH_RANGE = 2;
   const KING_SLASH_ARC = Math.PI / 2;
-  const KING_WINDUP = .3;
+  const KING_WINDUP = .4;
   const KING_COOLDOWN = 2.5;
   const KING_HEAL_INTERVAL = 5;
-  const KING_HEAL_AMOUNT = 75;
+  const KING_HEAL_AMOUNT = 35;
   const FLOOR_THEMES = [
     { name: 'CAVES', palette: { void: '#111214', floor: '#686a69', floorAlt: '#737573', wall: '#2a2d2f', wallTop: '#2a2d2f', grout: '#202225', player: '#ccd1c8', playerLight: '#f0eee4', enemy: '#80726a', boss: '#596665', bossLight: '#9ca99d', chest: '#ab8c55', accent: '#c0a86c' } },
     { name: 'DUNGEON', palette: { void: '#11100f', floor: '#414342', floorAlt: '#4b4d4b', wall: '#2f221e', wallTop: '#2f221e', grout: '#241a17', player: '#c4cbc3', playerLight: '#f1ead7', enemy: '#7d695a', boss: '#5e4540', bossLight: '#b28c69', chest: '#a67c48', accent: '#b7a270' } },
