@@ -392,3 +392,84 @@ h1 span, h2 span { color: var(--acid); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* A saved personal best on the menu, and a complete, readable end to each run. */
+.menu-record { color: #b0a893; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: baseline; justify-content: center; margin: 20px 0 0; font: 11px Arial, sans-serif; }
+.menu-record strong { color: var(--gold); font-size: 22px; }
+.menu-record small { flex-basis: 100%; font-size: 10px; }
+.result-screen { padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+.result-card { display: flex; flex-direction: column; max-width: 920px; width: 100%; height: min(650px, 100%); padding: clamp(16px, 3vw, 32px); border-top: 3px solid var(--gold); }
+.result-body { display: grid; flex: 1; min-height: 0; grid-template-columns: 1fr 1fr; gap: clamp(16px, 4vw, 40px); }
+.result-overview, .run-recap { min-width: 0; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; scrollbar-width: thin; scrollbar-color: #847d4c #29261f; }
+.result-overview { padding-right: 8px; }
+.result-card .eyebrow { color: var(--gold); margin: 0 0 12px; font-size: 11px; }
+.result-card h2 { font-size: clamp(30px, 5vw, 54px); line-height: 1.05; outline: none; }
+.result-card .result-copy { margin: 10px 0 16px; font-size: 13px; line-height: 1.45; }
+.result-haul { display: flex; flex-direction: column; margin: 0 0 16px; }
+.result-haul strong { color: var(--gold); font: 700 clamp(44px, 7vw, 76px)/1 Arial, sans-serif; overflow-wrap: anywhere; }
+.result-haul span { color: #b0a893; font-size: 10px; letter-spacing: .1em; margin-top: 6px; }
+.result-record { padding: 12px; border: 1px solid #625b4d; background: #24221c; }
+.result-record > strong { display: block; color: #e3ded1; font-size: 13px; margin-bottom: 5px; }
+.result-record > span { font-size: 12px; color: #c8c1ae; }
+.result-record b { color: var(--gold); }
+.result-record small { font-size: 10px; color: #b0a893; }
+.result-record p { margin: 6px 0 0; color: #b0a893; font-size: 11px; line-height: 1.4; }
+.result-record.is-record { background: #3b3320; border-color: var(--gold); }
+.result-record.is-record > strong { color: #efd28d; }
+.result-card .run-stats { gap: 12px; justify-content: space-between; padding: 12px 0; margin: 16px 0 10px; }
+.result-card .run-stats strong { font-size: clamp(17px, 2.5vw, 23px); }
+.result-card .run-stats span { font-size: 9px; }
+.result-progress { color: #c8c1ae; font-size: 11px; line-height: 1.5; margin: 0; }
+.run-recap { border-left: 1px solid #625b4d; padding-left: clamp(12px, 2vw, 24px); padding-right: 4px; }
+.recap-section + .recap-section { margin-top: 22px; }
+.recap-section h3 { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; font-weight: 600; margin: 0 0 10px; }
+.recap-section h3 > span { color: var(--gold); background: #38352d; border-radius: 3px; padding: 3px 8px; font-size: 12px; }
+.recap-list { list-style: none; padding: 0; margin: 0; }
+.recap-list li { display: flex; justify-content: space-between; align-items: center; gap: 10px; border-bottom: 1px solid #484236; padding: 10px 0; font-size: 13px; line-height: 1.25; }
+.recap-list li > span { text-transform: capitalize; }
+.recap-list small { display: block; color: #b0a893; font-size: 10px; margin-top: 4px; }
+.recap-list b { color: var(--gold); font-size: 12px; white-space: nowrap; }
+.recap-list li.recap-empty { color: #b0a893; font-size: 12px; line-height: 1.5; }
+.result-card .result-actions { flex-shrink: 0; border-top: 1px solid #625b4d; padding-top: 14px; margin-top: 16px; gap: 12px; }
+.result-card .result-actions button { min-height: 48px; font-size: 14px; }
+.result-card .result-actions .primary-button { flex: 2; background: #d1b574; font-size: 16px; }
+.result-screen:not(.hidden) .result-card { animation: run-finish .35s ease-out both; }
+.result-screen:not(.hidden) .is-record { animation: record-reveal .65s ease-out both; }
+@keyframes run-finish { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes record-reveal { from { border-color: #625b4d; } to { border-color: var(--gold); } }
+@media (orientation: landscape) and (max-height: 560px) {
+  .menu-content { display: grid; grid-template-columns: 1.15fr 1fr; gap: 8px 24px; width: min(92vw, 720px); padding: 20px; }
+  .menu-intro { text-align: left; }
+  .menu-kicker { margin-bottom: 12px; font-size: 10px; }
+  .menu-content h1 { font-size: clamp(38px, 6vw, 64px); }
+  .menu-content .tagline { font-size: 11px; margin: 12px 0 0; }
+  .menu-start { align-self: center; }
+  .menu-record { margin-top: 12px; }
+  .menu-help { grid-column: 1 / -1; margin: 6px 0 0; }
+  .result-card { padding: 14px 16px; }
+  .result-card .eyebrow { margin-bottom: 6px; font-size: 10px; }
+  .result-card h2 { font-size: 30px; }
+  .result-card .result-copy { font-size: 11px; margin: 6px 0 10px; }
+  .result-haul { margin-bottom: 10px; }
+  .result-haul strong { font-size: 42px; }
+  .result-record { padding: 8px; }
+  .result-card .run-stats { margin-top: 10px; padding: 8px 0; }
+  .result-card .result-actions { margin-top: 10px; padding-top: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .result-screen .result-card, .result-screen .is-record { animation: none !important; }
+}
+@media (orientation: landscape) and (max-height: 400px) {
+  .result-card .eyebrow, .result-card .result-copy, .result-record p { display: none; }
+  .result-overview { display: flex; flex-direction: column; }
+  .result-overview > * { flex-shrink: 0; }
+  .result-card h2 { font-size: 26px; }
+  .result-haul { flex-direction: row; align-items: baseline; gap: 8px; margin: 6px 0; }
+  .result-haul strong { font-size: 38px; }
+  .result-haul span { font-size: 8px; margin: 0; }
+  .result-record { padding: 6px 8px; }
+  .result-record > strong { font-size: 12px; margin-bottom: 3px; }
+  .result-card .run-stats { margin: 6px 0; padding: 6px 0; }
+  .result-progress { font-size: 10px; line-height: 1.3; }
+  .result-card .result-copy { display: block; order: 9; margin: 8px 0 0; }
+}

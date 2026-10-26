@@ -17,12 +17,17 @@
 
       <main id="menu-screen" class="screen menu-screen" aria-labelledby="game-title">
         <div class="menu-content">
-          <p class="menu-kicker">A simple dungeon game</p>
-          <h1 id="game-title">Dungeon Drifter</h1>
-          <p class="tagline">Explore the dungeon and defeat the boss on each floor.</p>
-          <div class="menu-actions">
-            <button id="play-button" class="primary-button" type="button">Play</button>
-            <button id="settings-button" class="secondary-button" type="button">Settings</button>
+          <div class="menu-intro">
+            <p class="menu-kicker">A simple dungeon game</p>
+            <h1 id="game-title">Dungeon Drifter</h1>
+            <p class="tagline">Explore the dungeon and defeat the boss on each floor.</p>
+          </div>
+          <div class="menu-start">
+            <div class="menu-actions">
+              <button id="play-button" class="primary-button" type="button">Play</button>
+              <button id="settings-button" class="secondary-button" type="button">Settings</button>
+            </div>
+            <p class="menu-record"><span>BEST GOLD</span><strong id="menu-best-gold">0</strong><small id="menu-record-scope">On this device</small></p>
           </div>
           <p class="menu-help">Use the touch controls in landscape mode.</p>
         </div>
@@ -108,18 +113,39 @@
           <div class="pause-actions">
             <button id="restart-button" class="primary-button" type="button">Restart run</button>
             <button id="resume-button" class="secondary-button" type="button">Resume</button>
-            <button id="pause-menu-button" class="secondary-button" type="button">Back to menu</button>
+            <button id="pause-menu-button" class="secondary-button" type="button">End run</button>
           </div>
         </div>
       </section>
 
       <section id="result-screen" class="screen result-screen hidden" aria-labelledby="result-title">
         <div class="result-card">
-          <p class="eyebrow" id="result-kicker">You completed the run.</p>
-          <h2 id="result-title">Run complete</h2>
-          <p id="result-copy" class="result-copy">You defeated the boss on every floor.</p>
-          <div class="run-stats"><div><strong id="result-floor">01</strong><span>FLOOR</span></div><div><strong id="result-gold">0</strong><span>GOLD</span></div><div><strong id="result-time">00:00</strong><span>TIME</span></div></div>
-          <div class="result-actions"><button id="replay-button" class="primary-button" type="button">Play again</button><button id="result-menu-button" class="secondary-button" type="button">Back to menu</button></div>
+          <div class="result-body">
+            <div id="result-overview" class="result-overview">
+              <p class="eyebrow" id="result-kicker">Your run, remembered</p>
+              <h2 id="result-title" tabindex="-1">Run complete</h2>
+              <p id="result-copy" class="result-copy">You defeated the boss on every floor.</p>
+              <div class="result-haul"><strong id="result-gold">0</strong><span>GOLD COLLECTED</span></div>
+              <div id="result-record" class="result-record" role="status">
+                <strong id="result-record-label">Personal best</strong>
+                <span><b id="result-best-gold">0</b> gold <small id="result-record-scope">on this device</small></span>
+                <p id="result-record-copy"></p>
+              </div>
+              <div class="run-stats"><div><strong id="result-floor">01 / 03</strong><span>FLOOR REACHED</span></div><div><strong id="result-kills">0</strong><span>DEFEATED</span></div><div><strong id="result-time">00:00</strong><span>TIME</span></div></div>
+              <p id="result-progress" class="result-progress"></p>
+            </div>
+            <div class="run-recap" tabindex="0" aria-label="Run collection and enemies defeated">
+              <section class="recap-section" aria-labelledby="gear-title">
+                <h3 id="gear-title">Gear found <span id="result-gear-count">0</span></h3>
+                <ul id="result-gear" class="recap-list"></ul>
+              </section>
+              <section class="recap-section" aria-labelledby="enemies-title">
+                <h3 id="enemies-title">Enemies defeated <span id="result-enemy-count">0</span></h3>
+                <ul id="result-enemies" class="recap-list"></ul>
+              </section>
+            </div>
+          </div>
+          <div class="result-actions"><button id="replay-button" class="primary-button" type="button">Play again</button><button id="result-menu-button" class="secondary-button" type="button">Main menu</button></div>
         </div>
       </section>
     </div>

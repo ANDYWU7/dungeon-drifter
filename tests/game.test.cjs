@@ -4,16 +4,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function loadGame() {
+function loadGame(storage = new Map(), storageUnavailable = false) {
   const nodes = new Map();
   const listeners = new Map();
   const frames = new Map();
   const timers = new Map();
   let nextId = 1;
+  function makeNode() {
+    const classes = new Set();
+    return {
+      children: [], style: {},
+      classList: { add(name) { classes.add(name); }, remove(name) { classes.delete(name); }, toggle(name, on) { if (on) classes.add(name); else classes.delete(name); }, contains: (name) => classes.has(name) },
+      setAttribute() {}, querySelector() { return {}; }, focus() {}, scrollTo() {},
+      append(...children) { this.children.push(...children); },
+      replaceChildren(...children) { this.children = children; }
+    };
+  }
   function node(id) {
     if (!nodes.has(id)) nodes.set(id, {
-      style: {}, classList: { add() {}, remove() {}, toggle() {} },
-      setAttribute() {}, querySelector() { return {}; },
+      ...makeNode(),
       addEventListener(type, handler) { listeners.set(`${id}:${type}`, handler); },
       getBoundingClientRect() { return { width: 960, height: 540 }; },
       getContext() { return new Proxy({}, { get: () => () => {} }); }
@@ -23,18 +32,22 @@ function loadGame() {
   const window = { devicePixelRatio: 1, addEventListener(type, handler) { listeners.set(`window:${type}`, handler); } };
   const document = {
     hidden: false, getElementById: node, querySelectorAll: () => [],
+    querySelector: () => null, createElement: makeNode,
     addEventListener(type, handler) { listeners.set(`document:${type}`, handler); }
   };
   const context = vm.createContext({ window, document, console, performance: { now: () => 1000 },
-    localStorage: { getItem: () => null, setItem() {} },
+    localStorage: {
+      getItem(key) { if (storageUnavailable) throw new Error('Storage unavailable'); return storage.get(key) ?? null; },
+      setItem(key, value) { if (storageUnavailable) throw new Error('Storage unavailable'); storage.set(key, value); }
+    },
     requestAnimationFrame(fn) { const id = nextId++; frames.set(id, fn); return id; },
     cancelAnimationFrame(id) { frames.delete(id); },
     setTimeout(fn) { const id = nextId++; timers.set(id, fn); return id; },
     clearTimeout(id) { timers.delete(id); }
   });
   const source = fs.readFileSync(path.join(__dirname, '..', 'game.js'), 'utf8');
-  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `globalThis.api = { game, input, settings, startGame, pauseGame, resumeGame, returnToMenu, completeBoss, update, attack, dash, usePotion, generateMap, endRun, createEnemy, updateEnemy, drawEnemy }; })();`), context);
-  return { ...context.api, frames, timers, listeners, document, node };
+  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `globalThis.api = { game, input, settings, startGame, pauseGame, resumeGame, returnToMenu, completeBoss, update, attack, dash, usePotion, generateMap, endRun, createEnemy, updateEnemy, drawEnemy, collectGear, defeatEnemy, openChest, beginFloor }; })();`), context);
+  return { ...context.api, frames, timers, listeners, document, node, storage };
 }
 
 test('pause/resume and restart keep a single animation loop', () => {
@@ -301,4 +314,79 @@ test('king heals 35 HP every five seconds and cannot heal beyond his maximum', (
   king.hp = 0;
   g.updateEnemy(king, 5);
   assert.equal(king.hp, 0);
+});
+
+test('recap counts all gear finds and enemy defeats once across floors', () => {
+  const g = loadGame();
+  g.startGame();
+  g.collectGear({ name: 'WOOD BAT', tier: 'common' });
+  g.collectGear({ name: 'WOOD BAT', tier: 'common' });
+  const chest = { x: 5, y: 5, open: false };
+  g.openChest(chest);
+  g.openChest(chest);
+  const bat = () => g.createEnemy({ kind: 'bat', name: 'BAT', hp: 20, goldMin: 5, goldMax: 5 }, 5, 5);
+  const first = bat();
+  g.defeatEnemy(first);
+  g.defeatEnemy(first);
+  g.defeatEnemy(bat());
+  g.completeBoss();
+  g.beginFloor(2);
+  assert.equal(g.game.summary.clearedFloors.size, 1);
+  assert.equal(g.game.summary.furthestFloor, 2);
+  g.endRun(false, 'You fainted');
+  assert.equal(g.node('result-gold').textContent, 10);
+  assert.equal(g.node('result-kills').textContent, 2);
+  assert.equal(g.node('result-gear-count').textContent, 3);
+  assert.equal(g.node('result-floor').textContent, '02 / 03');
+  assert.match(g.node('result-progress').textContent, /DUNGEON · 1 \/ 3 floors cleared/);
+  assert.equal(g.node('result-enemies').children[0].children[0].textContent, 'bat');
+  assert.equal(g.node('result-enemies').children[0].children[1].textContent, '×2');
+  g.listeners.get('replay-button:click')();
+  assert.equal(g.game.running, true);
+  assert.equal(g.game.gold, 0);
+  assert.equal(g.game.summary.gear.size, 0);
+  assert.equal(g.game.summary.enemies.size, 0);
+  assert.equal(g.game.summary.clearedFloors.size, 0);
+  assert.equal(g.frames.size, 1);
+});
+
+test('best gold persists across reloads, celebrates improvements, and survives replay', () => {
+  const storage = new Map();
+  let g = loadGame(storage);
+  g.startGame(); g.game.gold = 100; g.endRun(false);
+  assert.equal(storage.get('dungeon-drifter-best-gold'), '100');
+  assert.equal(g.node('menu-best-gold').textContent, 100);
+  assert.equal(g.node('result-record-label').textContent, 'New personal best!');
+  g = loadGame(storage);
+  assert.equal(g.node('menu-best-gold').textContent, 100);
+  g.startGame(); g.game.gold = 80; g.endRun(false);
+  assert.equal(g.node('result-best-gold').textContent, 100);
+  assert.equal(g.node('result-record-label').textContent, 'Personal best');
+  assert.equal(storage.get('dungeon-drifter-best-gold'), '100');
+  g.startGame(); g.game.gold = 100; g.endRun(false);
+  assert.equal(g.node('result-record-copy').textContent, 'You matched your best haul.');
+  g.startGame(); g.game.gold = 125; g.endRun(true);
+  assert.equal(storage.get('dungeon-drifter-best-gold'), '125');
+  assert.equal(g.node('result-record-label').textContent, 'New personal best!');
+  assert.match(g.node('result-record-copy').textContent, /25 gold above your previous best of 100/);
+});
+
+test('empty recaps, invalid records, unavailable storage, and ending a paused run are handled', () => {
+  for (const value of ['invalid', '-10', 'Infinity', '1.5']) {
+    const g = loadGame(new Map([['dungeon-drifter-best-gold', value]]));
+    assert.equal(g.node('menu-best-gold').textContent, 0);
+  }
+  const g = loadGame(new Map(), true);
+  g.startGame(); g.pauseGame(); g.game.gold = 20;
+  g.listeners.get('pause-menu-button:click')();
+  assert.equal(g.game.running, false);
+  assert.equal(g.frames.size, 0);
+  assert.equal(g.node('result-best-gold').textContent, 20);
+  assert.equal(g.node('result-record-scope').textContent, 'this session');
+  assert.equal(g.node('result-gear').children.length, 1);
+  assert.match(g.node('result-gear').children[0].textContent, /No gear found/);
+  assert.match(g.node('result-enemies').children[0].textContent, /No enemies defeated/);
+  assert.match(g.node('result-copy').textContent, /You ended the run/);
+  g.listeners.get('result-menu-button:click')();
+  assert.equal(g.node('menu-best-gold').textContent, 20);
 });

@@ -44,6 +44,12 @@
   const settingsKey = 'dungeon-drifter-settings';
   const storedSettings = (() => { try { return JSON.parse(localStorage.getItem(settingsKey) || '{}'); } catch { return {}; } })();
   const settings = { volume: storedSettings.volume ?? 70, shake: storedSettings.shake ?? true, flashes: storedSettings.flashes ?? true, holdSprint: storedSettings.holdSprint ?? true };
+  const bestGoldKey = 'dungeon-drifter-best-gold';
+  let recordStorageAvailable = true;
+  let bestGold = (() => {
+    try { const value = Number(localStorage.getItem(bestGoldKey)); return Number.isSafeInteger(value) && value >= 0 ? value : 0; }
+    catch { recordStorageAvailable = false; return 0; }
+  })();
   const input = { keys: new Set(), joystick: { active: false, x: 0, y: 0 }, sprint: false };
   const game = { running: false, paused: false, runSeed: 0, last: 0, floor: 1, theme: FLOOR_THEMES[0], profile: FLOOR_PROFILES[0], map: [], mapWidth: WORLD_W, mapHeight: WORLD_H, player: null, bossPosition: null, enemies: [], chests: [], particles: [], visibleCells: new Set(), inventory: { weapon: null, armor: { chest: null, legs: null, helmet: null } }, slash: 0, shake: 0, flash: 0, elapsed: 0, gold: 0, toastTimer: 0, bossAlerted: false, bossDefeated: false, bossFamilyActive: false, floorAdvanceQueued: false, audio: null };
   let audioContext;
@@ -73,6 +79,8 @@
   function stopLoop() { cancelAnimationFrame(animationFrame); animationFrame = 0; }
   function setupUi() {
     initSettingsUi();
+    $('menu-best-gold').textContent = bestGold;
+    $('menu-record-scope').textContent = recordStorageAvailable ? 'On this device' : 'This session';
     $('play-button').addEventListener('click', startGame);
     $('settings-button').addEventListener('click', () => { initSettingsUi(); showScreen('settings-screen'); });
     $('close-settings').addEventListener('click', () => showScreen('menu-screen'));
@@ -85,7 +93,7 @@
     $('resume-button').addEventListener('click', resumeGame);
     $('pause-menu-button').addEventListener('click', returnToMenu);
     $('replay-button').addEventListener('click', startGame);
-    $('result-menu-button').addEventListener('click', () => showScreen('menu-screen'));
+    $('result-menu-button').addEventListener('click', returnToMenu);
     $('attack-button').addEventListener('pointerdown', (e) => { e.preventDefault(); attack(); });
     $('dash-button').addEventListener('pointerdown', (e) => { e.preventDefault(); dash(); });
     $('potion-button').addEventListener('pointerdown', (e) => { e.preventDefault(); usePotion(); });
@@ -133,18 +141,20 @@
   function startGame() {
     ensureAudio();
     stopLoop(); resetInput();
+    game.summary = { gear: new Map(), enemies: new Map(), clearedFloors: new Set(), furthestFloor: 1 };
     game.running = true; game.paused = false; game.runSeed = Math.floor(Math.random() * 4294967296) >>> 0; game.floor = 1; game.gold = 0; game.inventory = { weapon: null, armor: { chest: null, legs: null, helmet: null } }; game.player = null; game.elapsed = 0; game.last = performance.now(); game.shake = 0; game.flash = 0;
     beginFloor(1); showScreen('game-screen'); resizeCanvas(); toast('The dungeon is ready.'); animationFrame = requestAnimationFrame(loop); tone(220, .08, 'sine');
   }
   function pauseGame() { if (!game.running || game.paused) return; game.paused = true; stopLoop(); resetInput(); showScreen('pause-screen'); }
   function resumeGame() { if (!game.running || !game.paused) return; game.paused = false; game.last = performance.now(); showScreen('game-screen'); animationFrame = requestAnimationFrame(loop); }
-  function returnToMenu() { game.running = false; game.paused = false; stopLoop(); resetInput(); showScreen('menu-screen'); }
+  function returnToMenu() { if (game.running) { endRun(false, 'You ended the run'); return; } showScreen('menu-screen'); }
   function jumpToFloor(floor, tier) {
     if (!game.running || game.paused) return;
     resetInput();
     game.inventory = { weapon: null, armor: { chest: null, legs: null, helmet: null } };
     ITEM_TIERS[tier].forEach((item) => {
       const equipped = { ...item, tier };
+      collectGear(equipped);
       if (item.slot === 'weapon') game.inventory.weapon = equipped;
       else game.inventory.armor[item.slot] = equipped;
     });
@@ -188,6 +198,7 @@
     return { grid, start, boss, chests, spawns };
   }
   function beginFloor(floor) {
+    game.summary.furthestFloor = Math.max(game.summary.furthestFloor, floor);
     game.floor = floor; game.theme = FLOOR_THEMES[floor - 1]; game.profile = FLOOR_PROFILES[floor - 1]; const generated = generateMap(floor); game.map = generated.grid; game.mapWidth = WORLD_W; game.mapHeight = WORLD_H; game.bossPosition = { x: generated.boss.x + .5, y: generated.boss.y + .5 };
     const previousPotions = game.player?.potions ?? 2; const maxHp = 100 + armorBonus();
     game.player = { x: generated.start.x + .5, y: generated.start.y + .5, hp: maxHp, maxHp, stamina: 100, maxStamina: 100, sprintExhausted: false, facingX: 1, facingY: 0, potions: previousPotions, weapon: game.inventory.weapon, invincible: 0, dashTime: 0, dashX: 0, dashY: 0, attackCooldown: 0 };
@@ -222,6 +233,11 @@
   function usePotion() { const p = game.player; if (!game.running || game.paused || p.potions <= 0 || p.hp >= p.maxHp) return; p.potions--; p.hp = Math.min(p.maxHp, p.hp + 38); burst(p.x, p.y, '#f2bd57', 12); toast('You used a potion and restored 38 health.'); tone(520, .15, 'sine'); updateHud(); }
   function awardGold(enemy) { const amount = enemy.goldMin + Math.floor(Math.random() * (enemy.goldMax - enemy.goldMin + 1)); game.gold += amount; return amount; }
   function defeatEnemy(enemy) {
+    if (enemy.defeated) return;
+    enemy.defeated = true;
+    const defeated = game.summary.enemies.get(enemy.kind) || { name: enemy.name, count: 0, boss: Boolean(enemy.boss) };
+    defeated.count++;
+    game.summary.enemies.set(enemy.kind, defeated);
     const gold = awardGold(enemy); burst(enemy.x, enemy.y, enemy.boss ? game.theme.palette.bossLight : game.theme.palette.accent, enemy.boss ? 28 : 8);
     if (enemy.kind === 'giant-slime') { game.bossFamilyActive = true; spawnSlimeSplit(enemy); toast('The giant slime split. Defeat the smaller slimes.'); game.shake = settings.shake ? .45 : 0; game.flash = settings.flashes ? .16 : 0; tone(80, .3, 'sawtooth'); return; }
     if (enemy.kind === 'slime' && enemy.splitLevel < 3) { spawnSlimeSplit(enemy); toast('A slime split. More slimes remain.'); return; }
@@ -233,7 +249,7 @@
     [[-.65, 0], [.65, 0]].forEach(([offsetX, offsetY], index) => { const spot = findNearbyFloor(source.x + offsetX, source.y + offsetY); const profile = { kind: 'slime', name: 'SLIME', hp, damage: 10, goldMin: 5, goldMax: 15 }; game.enemies.push(createEnemy(profile, spot.x, spot.y, { id: `slime-${game.floor}-${splitLevel}-${index}-${Date.now()}`, splitLevel, bossFamily: true })); });
   }
   function findNearbyFloor(x, y) { const candidates = [[x, y], [x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1], [x + .7, y + .7], [x - .7, y - .7]]; const spot = candidates.find(([cx, cy]) => canMove(cx, cy, .18)); return spot ? { x: spot[0], y: spot[1] } : { x: game.player.x, y: game.player.y }; }
-  function completeBoss() { if (game.floorAdvanceQueued) return; game.bossDefeated = true; game.bossFamilyActive = false; game.floorAdvanceQueued = true; game.floorAdvanceDelay = 1.2; $('objective-text').textContent = 'The next floor is open.'; toast(`The ${game.profile.boss.name.toLowerCase()} was defeated.`); game.shake = settings.shake ? .45 : 0; game.flash = settings.flashes ? .16 : 0; tone(80, .3, 'sawtooth'); }
+  function completeBoss() { if (game.floorAdvanceQueued) return; game.summary.clearedFloors.add(game.floor); game.bossDefeated = true; game.bossFamilyActive = false; game.floorAdvanceQueued = true; game.floorAdvanceDelay = 1.2; $('objective-text').textContent = 'The next floor is open.'; toast(`The ${game.profile.boss.name.toLowerCase()} was defeated.`); game.shake = settings.shake ? .45 : 0; game.flash = settings.flashes ? .16 : 0; tone(80, .3, 'sawtooth'); }
   function update(dt) {
     if (!game.running || game.paused) return;
     game.elapsed += dt;
@@ -300,12 +316,19 @@
   function summonGuards(warden, fixedCount = null, announce = true) { const count = fixedCount ?? (4 + Math.floor(Math.random() * 4)); for (let i = 0; i < count; i++) { const spot = findNearbyFloor(warden.x + (Math.random() - .5) * 5, warden.y + (Math.random() - .5) * 5); game.enemies.push(createEnemy({ kind: 'guard', name: 'GUARD', hp: 30, damage: 35, goldMin: 5, goldMax: 15 }, spot.x, spot.y, { id: `guard-${Date.now()}-${i}` })); } if (announce) toast(`The warden summoned ${count} guards.`); burst(warden.x, warden.y, game.theme.palette.bossLight, 18); }
   function rollTier() { const chances = TIER_CHANCES[game.floor - 1]; const roll = Math.random(); if (roll < chances.rare) return 'rare'; if (roll < chances.rare + chances.uncommon) return 'uncommon'; return 'common'; }
   function openChest(chest) {
+    if (chest.open) return;
     chest.open = true; const tier = rollTier(); const choices = ITEM_TIERS[tier]; const item = { ...choices[Math.floor(Math.random() * choices.length)], tier };
+    collectGear(item);
     const current = item.slot === 'weapon' ? game.inventory.weapon : game.inventory.armor[item.slot]; const better = !current || (item.damage || item.armor) > (current.damage || current.armor);
     burst(chest.x, chest.y, game.theme.palette.chest, 14); tone(660, .13, 'sine');
     if (better) { if (item.slot === 'weapon') game.inventory.weapon = item; else game.inventory.armor[item.slot] = item; game.player.weapon = game.inventory.weapon; const previousMax = game.player.maxHp; game.player.maxHp = 100 + armorBonus(); if (game.player.maxHp > previousMax) game.player.hp += game.player.maxHp - previousMax; toast(`You equipped the ${item.name.toLowerCase()}.`); }
     else toast(`You found a ${item.name.toLowerCase()}, but your current equipment is better.`);
     updateHud();
+  }
+  function collectGear(item) {
+    const found = game.summary.gear.get(item.name) || { name: item.name, tier: item.tier, count: 0 };
+    found.count++;
+    game.summary.gear.set(item.name, found);
   }
   function burst(x, y, color, amount) { for (let i = 0; i < amount; i++) { const angle = Math.random() * TAU; const speed = .4 + Math.random() * 1.5; game.particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: .25 + Math.random() * .4, maxLife: .65, color, size: .06 + Math.random() * .08 }); } }
   function rayReachesCell(targetX, targetY, pointX, pointY) {
@@ -539,9 +562,64 @@
   function drawPlayer(tile, ox, oy) { const p = game.player, s = worldToScreen(p.x, p.y), palette = game.theme.palette; ctx.save(); ctx.translate(s.x, s.y); if (p.invincible > 0) ctx.globalAlpha = .55 + Math.sin(performance.now() / 50) * .35; ctx.shadowColor = palette.player; ctx.shadowBlur = tile * .22; ctx.fillStyle = palette.player; ctx.beginPath(); ctx.arc(0, 0, tile * .3, 0, TAU); ctx.fill(); ctx.shadowBlur = 0; ctx.strokeStyle = palette.playerLight; ctx.lineWidth = Math.max(2, tile * .06); ctx.stroke(); ctx.fillStyle = palette.playerLight; ctx.beginPath(); ctx.moveTo(p.facingX * tile * .38, p.facingY * tile * .38); ctx.lineTo(p.facingX * tile * .08 - p.facingY * tile * .15, p.facingY * tile * .08 + p.facingX * tile * .15); ctx.lineTo(p.facingX * tile * .08 + p.facingY * tile * .15, p.facingY * tile * .08 - p.facingX * tile * .15); ctx.fill(); if (game.slash) { ctx.strokeStyle = `rgba(196,188,114,${game.slash / .22})`; ctx.lineWidth = tile * .12; ctx.beginPath(); ctx.arc(0, 0, tile * 1.1, Math.atan2(p.facingY, p.facingX) - .8, Math.atan2(p.facingY, p.facingX) + .8); ctx.stroke(); } ctx.restore(); }
   function updateHud() { if (!game.player) return; const p = game.player; const armor = game.inventory.armor; $('health-fill').style.width = `${Math.max(0, p.hp / p.maxHp) * 100}%`; $('stamina-fill').style.width = `${Math.max(0, p.stamina / p.maxStamina) * 100}%`; $('health-text').textContent = `${Math.ceil(p.hp)} / ${p.maxHp}`; $('potion-count').textContent = p.potions; $('gold-count').textContent = game.gold; $('weapon-readout').textContent = p.weapon?.name ?? 'UNARMED'; $('head-readout').textContent = armor.helmet?.name ?? 'NONE'; $('torso-readout').textContent = armor.chest?.name ?? 'NONE'; $('legs-readout').textContent = armor.legs?.name ?? 'NONE'; }
   function toast(message) { const node = $('game-toast'); node.textContent = message; node.classList.add('show'); clearTimeout(game.toastTimer); game.toastTimer = setTimeout(() => node.classList.remove('show'), 1800); }
-  function endRun(won, reason = 'The run ended') { if (!game.running) return; game.running = false; game.paused = false; stopLoop(); resetInput(); $('result-kicker').textContent = won ? 'You completed the run.' : 'The run ended.'; $('result-title').textContent = won ? 'Run complete' : 'Run ended'; $('result-copy').textContent = won ? 'You defeated the boss on every floor.' : `${reason}. You can start another run when you are ready.`; $('result-floor').textContent = String(game.floor).padStart(2, '0'); $('result-gold').textContent = game.gold; $('result-time').textContent = formatTime(game.elapsed); showScreen('result-screen'); tone(won ? 440 : 110, .22, won ? 'sine' : 'sawtooth'); }
+  function renderRecap(id, entries, emptyCopy, gear = false) {
+    const list = $(id);
+    list.replaceChildren();
+    if (!entries.length) {
+      const row = document.createElement('li'); row.className = 'recap-empty'; row.textContent = emptyCopy; list.append(row); return;
+    }
+    entries.forEach((entry) => {
+      const row = document.createElement('li');
+      const label = document.createElement('span'); label.textContent = entry.name.toLowerCase();
+      const detail = document.createElement('small'); detail.textContent = gear ? entry.tier : entry.boss ? 'Boss' : 'Enemy';
+      const count = document.createElement('b'); count.textContent = `×${entry.count}`;
+      label.append(detail); row.append(label, count); list.append(row);
+    });
+  }
+  function endRun(won, reason = 'The run ended') {
+    if (!game.running) return;
+    game.running = false; game.paused = false; stopLoop(); resetInput();
+    const previousBest = bestGold;
+    const newRecord = game.gold > previousBest;
+    if (newRecord) {
+      bestGold = game.gold;
+      try { localStorage.setItem(bestGoldKey, String(bestGold)); } catch { recordStorageAvailable = false; }
+    }
+    $('menu-best-gold').textContent = bestGold;
+    $('menu-record-scope').textContent = recordStorageAvailable ? 'On this device' : 'This session';
+    $('result-record-scope').textContent = recordStorageAvailable ? 'on this device' : 'this session';
+    $('result-best-gold').textContent = bestGold;
+    $('result-record').classList.toggle('is-record', newRecord);
+    $('result-record-label').textContent = newRecord ? 'New personal best!' : 'Personal best';
+    $('result-record-copy').textContent = newRecord ? (previousBest ? `${game.gold - previousBest} gold above your previous best of ${previousBest}.` : 'Your first gold record. A run to build on.') : game.gold === bestGold && bestGold > 0 ? 'You matched your best haul.' : bestGold > 0 ? `${bestGold - game.gold} gold away from your best haul.` : 'Your first gold record is still ahead.';
+    const summary = game.summary;
+    const gear = [...summary.gear.values()];
+    const enemies = [...summary.enemies.values()].sort((a, b) => Number(b.boss) - Number(a.boss));
+    const kills = enemies.reduce((total, enemy) => total + enemy.count, 0);
+    const gearCount = gear.reduce((total, item) => total + item.count, 0);
+    const cleared = summary.clearedFloors.size;
+    $('result-kicker').textContent = won ? 'All three floors conquered' : 'Your run, remembered';
+    $('result-title').textContent = won ? 'Run complete' : 'Run ended';
+    $('result-copy').textContent = won ? 'The king has fallen. The dungeon is behind you.' : `${reason}. You reached the ${FLOOR_THEMES[summary.furthestFloor - 1].name.toLowerCase()}.`;
+    $('result-floor').textContent = `${String(summary.furthestFloor).padStart(2, '0')} / 03`;
+    $('result-gold').textContent = game.gold;
+    $('result-kills').textContent = kills;
+    $('result-time').textContent = formatTime(game.elapsed);
+    $('result-progress').textContent = `${FLOOR_THEMES[summary.furthestFloor - 1].name} · ${cleared} / 3 floors cleared`;
+    $('result-gear-count').textContent = gearCount;
+    $('result-enemy-count').textContent = kills;
+    renderRecap('result-gear', gear, 'No gear found this time. Chests hold your next upgrade.', true);
+    renderRecap('result-enemies', enemies, 'No enemies defeated this time. Your next run starts fresh.');
+    showScreen('result-screen');
+    $('result-overview')?.scrollTo?.(0, 0);
+    document.querySelector('.run-recap')?.scrollTo(0, 0);
+    $('result-title').focus({ preventScroll: true });
+    tone(330, .15, 'sine');
+    tone(won ? 440 : 392, .18, 'sine', .12);
+    if (won) tone(660, .3, 'sine', .26);
+  }
   function ensureAudio() { if (!audioContext) { try { audioContext = new (window.AudioContext || window.webkitAudioContext)(); } catch { return; } } if (audioContext.state === 'suspended') audioContext.resume(); }
-  function tone(freq, duration, type) { if (!audioContext || settings.volume <= 0) return; try { const osc = audioContext.createOscillator(); const gain = audioContext.createGain(); osc.type = type; osc.frequency.value = freq; gain.gain.setValueAtTime((settings.volume / 100) * .035, audioContext.currentTime); gain.gain.exponentialRampToValueAtTime(.0001, audioContext.currentTime + duration); osc.connect(gain).connect(audioContext.destination); osc.start(); osc.stop(audioContext.currentTime + duration); } catch { /* audio optional */ } }
+  function tone(freq, duration, type, delay = 0) { if (!audioContext || settings.volume <= 0) return; try { const osc = audioContext.createOscillator(); const gain = audioContext.createGain(); const start = audioContext.currentTime + delay; osc.type = type; osc.frequency.value = freq; gain.gain.setValueAtTime((settings.volume / 100) * .035, start); gain.gain.exponentialRampToValueAtTime(.0001, start + duration); osc.connect(gain).connect(audioContext.destination); osc.start(start); osc.stop(start + duration); } catch { /* audio optional */ } }
   function loop(now) { animationFrame = 0; if (!game.running || game.paused) return; const dt = Math.min(.034, (now - game.last) / 1000 || .016); game.last = now; update(dt); if (!game.running || game.paused) return; render(); animationFrame = requestAnimationFrame(loop); }
 
   setupUi(); resizeCanvas();
