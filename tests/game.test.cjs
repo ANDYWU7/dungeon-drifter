@@ -216,14 +216,14 @@ test('floor jump shortcuts ignore key repeats, modifier combinations, and paused
   assert.equal(g.game.floor, 1);
 });
 
-test('king detects outside his hitbox, winds up for 0.75 seconds, and commits after retreat', () => {
+test('king detects outside his hitbox, winds up for 0.3 seconds, and commits after retreat', () => {
   const { g, king } = kingFight();
   g.updateEnemy(king, .016);
-  assert.equal(king.kingWindup, .75);
+  assert.equal(king.kingWindup, .3);
   assert.equal(king.x, 10);
   g.drawEnemy(king, 32, 0, 0);
   g.game.player.x = 16;
-  g.updateEnemy(king, .74);
+  g.updateEnemy(king, .29);
   assert.ok(king.kingWindup > 0);
   assert.equal(king.slash, 0);
   g.updateEnemy(king, .011);
@@ -239,7 +239,7 @@ test('king hits once after windup, then waits 2.5 seconds before winding up agai
   g.game.player.x = 11;
   g.updateEnemy(king, .016);
   assert.equal(g.game.player.hp, 100);
-  g.updateEnemy(king, .74);
+  g.updateEnemy(king, .29);
   assert.equal(g.game.player.hp, 100);
   g.updateEnemy(king, .011);
   assert.equal(g.game.player.hp, 40);
@@ -247,7 +247,7 @@ test('king hits once after windup, then waits 2.5 seconds before winding up agai
   assert.equal(king.kingWindup, 0);
   assert.equal(g.game.player.hp, 40);
   g.updateEnemy(king, .11);
-  assert.equal(king.kingWindup, .75);
+  assert.equal(king.kingWindup, .3);
   assert.equal(g.game.player.hp, 40);
 });
 
@@ -255,7 +255,7 @@ test('king locks his aim so players can dodge behind the marked slash', () => {
   const { g, king } = kingFight();
   g.updateEnemy(king, .016);
   Object.assign(g.game.player, { x: 9, y: 11 });
-  g.updateEnemy(king, .75);
+  g.updateEnemy(king, .3);
   assert.equal(king.facingX, 1);
   assert.equal(king.facingY, 0);
   assert.equal(king.slash, .38);
@@ -274,7 +274,31 @@ test('king slash reaches 2.3 tiles across a full forward semicircle', () => {
     const { g, king } = kingFight();
     g.updateEnemy(king, .016);
     Object.assign(g.game.player, { x, y });
-    g.updateEnemy(king, .75);
+    g.updateEnemy(king, .3);
     assert.equal(g.game.player.hp, expectedHp, `player at ${x}, ${y}`);
   }
+});
+
+test('king heals 75 HP every five seconds and cannot heal beyond his maximum', () => {
+  const { g, king } = kingFight();
+  g.game.player.x = 40;
+  king.hp = 550;
+  assert.equal(king.healTimer, 5);
+  g.updateEnemy(king, 4.99);
+  assert.equal(king.hp, 550);
+  g.updateEnemy(king, .02);
+  assert.equal(king.hp, 625);
+  assert.equal(g.node('game-toast').textContent, 'The king recovered 75 health.');
+  g.updateEnemy(king, 4.98);
+  assert.equal(king.hp, 625);
+  g.updateEnemy(king, .02);
+  assert.equal(king.hp, 700);
+  g.updateEnemy(king, 5);
+  assert.equal(king.hp, 750);
+  assert.equal(g.node('game-toast').textContent, 'The king recovered 50 health.');
+  g.updateEnemy(king, 5);
+  assert.equal(king.hp, 750);
+  king.hp = 0;
+  g.updateEnemy(king, 5);
+  assert.equal(king.hp, 0);
 });
