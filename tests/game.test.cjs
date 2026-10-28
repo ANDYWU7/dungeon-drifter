@@ -48,7 +48,7 @@ function loadGame(storage = new Map(), storageUnavailable = false) {
     clearTimeout(id) { timers.delete(id); }
   });
   const source = fs.readFileSync(path.join(__dirname, '..', 'game.js'), 'utf8');
-  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `globalThis.api = { game, input, settings, startGame, pauseGame, resumeGame, returnToMenu, completeBoss, update, attack, dash, usePotion, generateMap, endRun, createEnemy, updateEnemy, drawEnemy, collectGear, defeatEnemy, openChest, beginFloor, render, pointIsVisible, getCellVisibility, tileMetrics }; })();`), context);
+  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `globalThis.api = { game, input, settings, startGame, pauseGame, resumeGame, returnToMenu, completeBoss, update, attack, dash, usePotion, generateMap, endRun, createEnemy, updateEnemy, drawEnemy, collectGear, defeatEnemy, openChest, beginFloor, render, pointIsVisible, getCellVisibility, tileMetrics, wallIsBright, isWall, canMove }; })();`), context);
   return { ...context.api, frames, timers, listeners, document, node, storage, canvasCalls };
 }
 
@@ -410,10 +410,10 @@ test('shadow draws dark terrain while hiding enemies and chests behind a wall', 
   g.render();
   const { tile, ox, oy } = g.tileMetrics();
   const paintedAt = (x, y) => g.canvasCalls.filter((call) => call.method === 'fillRect' && call.args[0] === ox + x * tile && call.args[1] === oy + y * tile);
-  for (const [x, y, color] of [[8, 6, g.game.theme.palette.floor], [9, 6, g.game.theme.palette.wall]]) {
+  for (const [x, y, color, shade] of [[8, 6, g.game.theme.palette.floor, 'rgba(0,0,0,.78)'], [9, 6, g.game.theme.palette.wall, 'rgba(0,0,0,.18)']]) {
     const fills = paintedAt(x, y);
     assert.ok(fills.some((call) => call.fillStyle === color), 'hidden terrain still has its base color');
-    assert.ok(fills.some((call) => call.fillStyle === 'rgba(0,0,0,.78)'), 'hidden terrain is heavily darkened');
+    assert.ok(fills.some((call) => call.fillStyle === shade), 'floors are deeply shadowed; walls are only slightly darkened');
   }
   const drawnAt = (x, y) => g.canvasCalls.some((call) => call.method === 'translate' && call.args[0] === ox + x * tile && call.args[1] === oy + y * tile);
   assert.equal(drawnAt(5.5, 6.5), true, 'lit chest is drawn');
@@ -435,4 +435,100 @@ test('partly lit tiles do not reveal objects positioned in their shadowed portio
   assert.equal(tile.full, false);
   assert.equal(g.pointIsVisible(7.8, 5.1), true);
   assert.equal(g.pointIsVisible(7.8, 5.9), false);
+});
+
+test('each room corner brightens from either adjacent lit wall without revealing shadowed objects', () => {
+  const g = loadGame();
+  g.startGame();
+  g.game.map = Array.from({ length: 15 }, () => Array(17).fill('#'));
+  g.game.mapWidth = 17; g.game.mapHeight = 15;
+  for (let y = 4; y <= 10; y++) for (let x = 4; x <= 10; x++) g.game.map[y][x] = '.';
+  const corners = [
+    [3, 3, [[4, 3], [3, 4]]], [11, 3, [[10, 3], [11, 4]]],
+    [3, 11, [[4, 11], [3, 10]]], [11, 11, [[10, 11], [11, 10]]]
+  ];
+  for (const [x, y, neighbors] of corners) for (const [nx, ny] of neighbors) {
+    // Isolate the visual corner rule from the raycaster's sampling positions.
+    g.game.rayCache = new Map();
+    for (let wy = 0; wy < 15; wy++) for (let wx = 0; wx < 17; wx++) {
+      g.game.rayCache.set(`${wx},${wy}`, { visible: false, full: false, mask: [] });
+    }
+    assert.equal(g.wallIsBright(x, y, new Set()), false, 'an unlit corner stays shaded');
+    g.game.rayCache.set(`${nx},${ny}`, { visible: true, full: true, mask: [] });
+    assert.equal(g.wallIsBright(x, y, new Set()), true, `corner ${x},${y} lights from ${nx},${ny}`);
+    assert.equal(g.getCellVisibility(x, y).visible, false, 'corner light does not alter the ray mask');
+    assert.equal(g.pointIsVisible(4.5, 4.5), false, 'shadowed objects remain hidden');
+    assert.equal(g.wallIsBright(6, 3, new Set()), false, 'light does not spread along a straight wall');
+  }
+});
+
+test('render fills a ray-shadowed room corner brightly when a neighboring wall is lit', () => {
+  const g = loadGame();
+  g.startGame();
+  g.game.map = Array.from({ length: 15 }, () => Array(17).fill('#'));
+  g.game.mapWidth = 17; g.game.mapHeight = 15;
+  for (let y = 4; y <= 10; y++) for (let x = 4; x <= 10; x++) g.game.map[y][x] = '.';
+  Object.assign(g.game.player, { x: 7.2, y: 7.65 });
+  g.game.chests = []; g.game.enemies = []; g.game.rayCache = new Map();
+  assert.equal(g.getCellVisibility(3, 3).visible, false);
+  assert.equal(g.wallIsBright(3, 3, new Set()), true);
+  g.canvasCalls.length = 0;
+  g.render();
+  const { tile, ox, oy } = g.tileMetrics();
+  const fills = g.canvasCalls.filter((call) => call.method === 'fillRect' && call.args[0] === ox + 3 * tile && call.args[1] === oy + 3 * tile);
+  assert.ok(fills.some((call) => call.fillStyle === g.game.theme.palette.wall));
+  assert.equal(fills.some((call) => call.fillStyle === 'rgba(0,0,0,.18)'), false);
+});
+
+test('generated maps separate unused void from the one-tile wall outline', () => {
+  const g = loadGame();
+  for (let seed = 0; seed < 10; seed++) for (let floor = 1; floor <= 3; floor++) {
+    g.game.runSeed = seed;
+    const { grid } = g.generateMap(floor);
+    assert.ok(grid.some((row) => row.includes(' ')));
+    for (let y = 0; y < grid.length; y++) for (let x = 0; x < grid[y].length; x++) {
+      const neighbors = [];
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (dx || dy) neighbors.push(grid[y + dy]?.[x + dx]);
+      }
+      if (grid[y][x] === '#') assert.ok(neighbors.includes('.'), 'every wall borders a floor');
+      if (grid[y][x] === ' ') assert.equal(neighbors.includes('.'), false, 'void cannot replace a room boundary');
+    }
+  }
+});
+
+test('void blocks movement and stays invisible even inside the player light radius', () => {
+  const g = loadGame();
+  g.startGame();
+  g.game.map = [['#', '#', ' '], ['#', '.', ' '], ['#', '#', ' ']];
+  g.game.mapWidth = 3; g.game.mapHeight = 3;
+  Object.assign(g.game.player, { x: 1.5, y: 1.5 });
+  g.game.rayCache = new Map();
+  assert.equal(g.isWall(2.5, 1.5), true);
+  assert.equal(g.canMove(2.5, 1.5), false);
+  assert.equal(g.pointIsVisible(2.5, 1.5), false);
+  assert.equal(g.canMove(1.5, 1.5), true);
+});
+
+test('void receives no tile borders and remains outside the combat flash drawing clip', () => {
+  const g = loadGame();
+  g.startGame();
+  g.game.map = Array.from({ length: 7 }, () => Array(7).fill(' '));
+  g.game.mapWidth = 7; g.game.mapHeight = 7;
+  for (let y = 2; y <= 4; y++) for (let x = 2; x <= 4; x++) g.game.map[y][x] = '#';
+  g.game.map[3][3] = '.';
+  Object.assign(g.game.player, { x: 3.5, y: 3.5 });
+  g.game.chests = []; g.game.enemies = []; g.game.flash = .16; g.game.shake = .2;
+  g.canvasCalls.length = 0;
+  g.render();
+  assert.equal(g.canvasCalls.find((call) => call.method === 'fillRect').fillStyle, '#000000');
+  const { tile, ox, oy } = g.tileMetrics();
+  const regions = g.canvasCalls.filter((call) => call.method === 'rect');
+  assert.equal(regions.length, 3);
+  regions.forEach((call, index) => assert.deepEqual(call.args, [ox + 2 * tile, oy + (index + 2) * tile, 3 * tile, tile]));
+  assert.equal(g.canvasCalls.filter((call) => call.method === 'strokeRect').length, 1, 'only the floor has a tile border');
+  const clipIndex = g.canvasCalls.findIndex((call) => call.method === 'clip');
+  const flashIndex = g.canvasCalls.findIndex((call) => call.method === 'fillRect' && call.fillStyle.startsWith('rgba(255,'));
+  assert.ok(flashIndex > clipIndex);
+  assert.equal(g.canvasCalls.at(-1).method, 'restore', 'the terrain clip is retained through the flash');
 });

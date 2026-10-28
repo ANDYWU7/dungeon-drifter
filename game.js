@@ -19,6 +19,8 @@
   const PLAYER_LIGHT_RADIUS = 1.45;
   const PLAYER_CELL_RADIUS = 1;
   const TERRAIN_SHADOW = 'rgba(0,0,0,.78)';
+  const WALL_SHADOW = 'rgba(0,0,0,.18)';
+  const VOID_COLOR = '#000000';
   const KING_DETECT_RANGE = 4;
   const KING_SLASH_RANGE = 2;
   const KING_SLASH_ARC = Math.PI / 2;
@@ -27,9 +29,9 @@
   const KING_HEAL_INTERVAL = 5;
   const KING_HEAL_AMOUNT = 35;
   const FLOOR_THEMES = [
-    { name: 'CAVES', palette: { void: '#111214', floor: '#686a69', floorAlt: '#737573', wall: '#2a2d2f', wallTop: '#2a2d2f', grout: '#202225', player: '#ccd1c8', playerLight: '#f0eee4', enemy: '#80726a', boss: '#596665', bossLight: '#9ca99d', chest: '#ab8c55', accent: '#c0a86c' } },
-    { name: 'DUNGEON', palette: { void: '#11100f', floor: '#414342', floorAlt: '#4b4d4b', wall: '#2f221e', wallTop: '#2f221e', grout: '#241a17', player: '#c4cbc3', playerLight: '#f1ead7', enemy: '#7d695a', boss: '#5e4540', bossLight: '#b28c69', chest: '#a67c48', accent: '#b7a270' } },
-    { name: 'CASTLE', palette: { void: '#171413', floor: '#675244', floorAlt: '#745d4c', wall: '#505256', wallTop: '#505256', grout: '#393b3f', player: '#cbd2ca', playerLight: '#f4ead6', enemy: '#967057', boss: '#5d4646', bossLight: '#bd9570', chest: '#be9659', accent: '#c9ae78' } }
+    { name: 'CAVES', palette: { void: VOID_COLOR, floor: '#686a69', floorAlt: '#737573', wall: '#2a2d2f', wallTop: '#2a2d2f', grout: '#202225', player: '#ccd1c8', playerLight: '#f0eee4', enemy: '#80726a', boss: '#596665', bossLight: '#9ca99d', chest: '#ab8c55', accent: '#c0a86c' } },
+    { name: 'DUNGEON', palette: { void: VOID_COLOR, floor: '#414342', floorAlt: '#4b4d4b', wall: '#2f221e', wallTop: '#2f221e', grout: '#241a17', player: '#c4cbc3', playerLight: '#f1ead7', enemy: '#7d695a', boss: '#5e4540', bossLight: '#b28c69', chest: '#a67c48', accent: '#b7a270' } },
+    { name: 'CASTLE', palette: { void: VOID_COLOR, floor: '#675244', floorAlt: '#745d4c', wall: '#505256', wallTop: '#505256', grout: '#393b3f', player: '#cbd2ca', playerLight: '#f4ead6', enemy: '#967057', boss: '#5d4646', bossLight: '#bd9570', chest: '#be9659', accent: '#c9ae78' } }
   ];
   const FLOOR_PROFILES = [
     { light: { kind: 'bat', name: 'BAT', hp: 20, damage: 10, goldMin: 5, goldMax: 15 }, heavy: { kind: 'skeleton', name: 'SKELETON', hp: 40, damage: 20, goldMin: 20, goldMax: 30 }, boss: { kind: 'giant-slime', name: 'GIANT SLIME', hp: 250, damage: 40, goldMin: 250, goldMax: 250 } },
@@ -185,6 +187,15 @@
     const route = [startRoom, ...rooms.slice(2), bossRoom];
     for (let i = 1; i < route.length; i++) tunnel(center(route[i - 1]), center(route[i]));
     const sideRooms = route.slice(1, -1); for (let i = 0; i < Math.floor(sideRooms.length / 2); i++) { const a = sideRooms[Math.floor(random() * sideRooms.length)]; const b = sideRooms[Math.floor(random() * sideRooms.length)]; tunnel(center(a), center(b)); }
+    // Only the outline around walkable tiles is wall. Unused space is void.
+    for (let y = 0; y < WORLD_H; y++) for (let x = 0; x < WORLD_W; x++) {
+      if (grid[y][x] !== '#') continue;
+      let bordersFloor = false;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (grid[y + dy]?.[x + dx] === '.') bordersFloor = true;
+      }
+      if (!bordersFloor) grid[y][x] = ' ';
+    }
     const start = { x: startRoom.x + 2, y: startRoom.y + 2 };
     const boss = center(bossRoom);
     const cellKey = (x, y) => `${x},${y}`;
@@ -215,7 +226,7 @@
   function screenSize() { const rect = canvas.getBoundingClientRect(); return { w: rect.width, h: rect.height }; }
   function tileMetrics() { const { w, h } = screenSize(); const tile = Math.min(w / VIEW_W, h / VIEW_H) * ZOOM; const cameraX = game.player?.x ?? WORLD_W / 2; const cameraY = game.player?.y ?? WORLD_H / 2; return { tile, ox: w / 2 - cameraX * tile, oy: h / 2 - cameraY * tile }; }
   function worldToScreen(x, y) { const { tile, ox, oy } = tileMetrics(); return { x: ox + x * tile, y: oy + y * tile, tile }; }
-  function isWall(x, y) { const tx = Math.floor(x), ty = Math.floor(y); return tx < 0 || ty < 0 || tx >= game.mapWidth || ty >= game.mapHeight || game.map[ty]?.[tx] === '#'; }
+  function isWall(x, y) { const tx = Math.floor(x), ty = Math.floor(y); return tx < 0 || ty < 0 || tx >= game.mapWidth || ty >= game.mapHeight || game.map[ty]?.[tx] !== '.'; }
   function canMove(x, y, radius = .22) { return !isWall(x - radius, y - radius) && !isWall(x + radius, y - radius) && !isWall(x - radius, y + radius) && !isWall(x + radius, y + radius); }
   function tryMove(entity, dx, dy, radius = .23) { const nx = entity.x + dx; if (canMove(nx, entity.y, radius)) entity.x = nx; const ny = entity.y + dy; if (canMove(entity.x, ny, radius)) entity.y = ny; }
   function direction() {
@@ -388,6 +399,11 @@
     if (!game.player) return { visible: true, full: true, mask: [] };
     const cacheKey = `${targetX},${targetY}`;
     if (game.rayCache?.has(cacheKey)) return game.rayCache.get(cacheKey);
+    if (!isTerrain(game.map[targetY]?.[targetX])) {
+      const hidden = { visible: false, full: false, mask: [] };
+      game.rayCache?.set(cacheKey, hidden);
+      return hidden;
+    }
     const cellCenterX = targetX + .5;
     const cellCenterY = targetY + .5;
     if (Math.hypot(cellCenterX - game.player.x, cellCenterY - game.player.y) > VISIBILITY_DISTANCE + .8) {
@@ -452,9 +468,27 @@
     const sampleY = Math.min(grid - 1, Math.floor((y - cellY) * grid));
     return visibility.mask.includes(sampleY * grid + sampleX);
   }
+  function wallIsBright(x, y, previousVisibleCells) {
+    const directlyLit = (wx, wy) => getCellVisibility(wx, wy).visible || previousVisibleCells.has(`${wx},${wy}`);
+    if (directlyLit(x, y)) return true;
+    // A room corner has two perpendicular wall neighbors around a diagonal
+    // floor tile. Light it from either neighbor without changing the ray mask
+    // or spreading light along an entire wall.
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+      if (game.map[y]?.[x + sx] === '#' && game.map[y + sy]?.[x] === '#' && game.map[y + sy]?.[x + sx] === '.' &&
+          (directlyLit(x + sx, y) || directlyLit(x, y + sy))) return true;
+    }
+    return false;
+  }
+  function isTerrain(cell) { return cell === '.' || cell === '#'; }
   function render() {
-    const { w, h } = screenSize(); if (!w || !h) return; ctx.clearRect(0, 0, w, h); const { tile, ox, oy } = tileMetrics(); const palette = game.theme.palette; const shakeX = game.shake ? (Math.random() - .5) * game.shake * 22 : 0; const shakeY = game.shake ? (Math.random() - .5) * game.shake * 22 : 0; ctx.save(); ctx.translate(shakeX, shakeY);
-    ctx.fillStyle = palette.void; ctx.fillRect(-20, -20, w + 40, h + 40);
+    const { w, h } = screenSize(); if (!w || !h) return;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = VOID_COLOR; ctx.fillRect(0, 0, w, h);
+    const { tile, ox, oy } = tileMetrics();
+    const shakeX = game.shake ? (Math.random() - .5) * game.shake * 22 : 0;
+    const shakeY = game.shake ? (Math.random() - .5) * game.shake * 22 : 0;
+    ctx.save(); ctx.translate(shakeX, shakeY);
     // Keep the previous wall mask for one frame. A wall that is exactly on a
     // ray boundary should not blink off while the player is moving past it.
     const previousVisibleCells = game.visibleCells;
@@ -462,26 +496,41 @@
     game.rayCache = new Map();
     const minX = Math.max(0, Math.floor((-ox) / tile) - 1), maxX = Math.min(game.mapWidth - 1, Math.ceil((w - ox) / tile) + 1);
     const minY = Math.max(0, Math.floor((-oy) / tile) - 1), maxY = Math.min(game.mapHeight - 1, Math.ceil((h - oy) / tile) + 1);
+    // Clip all drawing to actual terrain. Borders, glow, particles, swords and
+    // combat flashes cannot spill into the solid-black void, even while shaking.
+    ctx.beginPath();
+    for (let y = minY; y <= maxY; y++) {
+      let runStart = null;
+      for (let x = minX; x <= maxX + 1; x++) {
+        if (x <= maxX && isTerrain(game.map[y][x])) { if (runStart === null) runStart = x; }
+        else if (runStart !== null) { ctx.rect(ox + runStart * tile, oy + y * tile, (x - runStart) * tile, tile); runStart = null; }
+      }
+    }
+    ctx.clip();
     for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
+      if (!isTerrain(game.map[y][x])) continue;
       const key = `${x},${y}`;
       const visibility = getCellVisibility(x, y);
       const visible = visibility.visible;
-      const stableWall = game.map[y][x] === '#' && previousVisibleCells.has(key) && !visible;
+      const brightWall = game.map[y][x] === '#' && wallIsBright(x, y, previousVisibleCells);
       if (visible) game.visibleCells.add(key);
       // Terrain remains readable in deep shadow; objects still use the ray mask.
-      drawTile(x, y, tile, ox, oy, stableWall ? { ...visibility, full: true } : visibility);
+      drawTile(x, y, tile, ox, oy, brightWall ? { ...visibility, full: true } : visibility);
     }
-    game.chests.forEach((chest) => { if (pointIsVisible(chest.x, chest.y)) drawChest(chest, tile, ox, oy); }); game.enemies.forEach((enemy) => { if (pointIsVisible(enemy.x, enemy.y)) drawEnemy(enemy, tile, ox, oy); }); drawPlayer(tile, ox, oy); game.particles.forEach((particle) => { if (!pointIsVisible(particle.x, particle.y)) return; const s = worldToScreen(particle.x, particle.y); ctx.globalAlpha = Math.max(0, particle.life / particle.maxLife); ctx.fillStyle = particle.color; ctx.fillRect(s.x - particle.size * tile / 2, s.y - particle.size * tile / 2, particle.size * tile, particle.size * tile); }); ctx.globalAlpha = 1; ctx.restore(); if (game.flash) { ctx.fillStyle = `rgba(255,${game.flash > .1 ? 150 : 210},${game.flash > .1 ? 105 : 190},${game.flash * 1.2})`; ctx.fillRect(0, 0, w, h); }
+    game.chests.forEach((chest) => { if (pointIsVisible(chest.x, chest.y)) drawChest(chest, tile, ox, oy); }); game.enemies.forEach((enemy) => { if (pointIsVisible(enemy.x, enemy.y)) drawEnemy(enemy, tile, ox, oy); }); drawPlayer(tile, ox, oy); game.particles.forEach((particle) => { if (!pointIsVisible(particle.x, particle.y)) return; const s = worldToScreen(particle.x, particle.y); ctx.globalAlpha = Math.max(0, particle.life / particle.maxLife); ctx.fillStyle = particle.color; ctx.fillRect(s.x - particle.size * tile / 2, s.y - particle.size * tile / 2, particle.size * tile, particle.size * tile); }); ctx.globalAlpha = 1;
+    if (game.flash) { ctx.fillStyle = `rgba(255,${game.flash > .1 ? 150 : 210},${game.flash > .1 ? 105 : 190},${game.flash * 1.2})`; ctx.fillRect(-shakeX, -shakeY, w, h); }
+    ctx.restore();
   }
   function drawTile(x, y, tile, ox, oy, visibility = { full: true }) {
     const px = ox + x * tile;
     const py = oy + y * tile;
     const cell = game.map[y][x];
+    if (!isTerrain(cell)) return;
     const palette = game.theme.palette;
     if (cell === '#') {
       ctx.fillStyle = palette.wall;
       ctx.fillRect(px, py, tile + .5, tile + .5);
-      if (!visibility.full) { ctx.fillStyle = TERRAIN_SHADOW; ctx.fillRect(px, py, tile + .5, tile + .5); }
+      if (!visibility.full) { ctx.fillStyle = WALL_SHADOW; ctx.fillRect(px, py, tile + .5, tile + .5); }
       return;
     }
 
