@@ -169,20 +169,21 @@
     toast(`Testing: ${game.theme.name.toLowerCase()} with full ${tier} gear.`);
   }
   function seededRandom(seed) { let value = seed >>> 0; return () => { value += 0x6D2B79F5; let t = value; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
-  // For every row span containing the spawn, take its widest uninterrupted
-  // floor run through the spawn column. One of these is the maximum rectangle.
-  function findBossEnclosure(grid, spawn) {
-    const sx = Math.floor(spawn.x), sy = Math.floor(spawn.y);
-    let best = { x: sx, y: sy, w: 1, h: 1 };
-    for (let top = sy; top >= 0; top--) {
+  // Search all row spans containing the entire original boss room, then take
+  // their widest floor run. A larger hallway cannot replace part of the room.
+  function findBossEnclosure(grid, room) {
+    const sx = room.x, lastX = room.x + room.w - 1, lastY = room.y + room.h - 1;
+    let best = { ...room };
+    for (let top = room.y; top >= 0; top--) {
       const open = Array(grid[0].length).fill(true);
       for (let bottom = top; bottom < grid.length; bottom++) {
         for (let x = 0; x < open.length; x++) open[x] = open[x] && grid[bottom][x] === '.';
         if (!open[sx]) break;
-        if (bottom < sy) continue;
+        if (bottom < lastY) continue;
         let left = sx, right = sx;
         while (left > 0 && open[left - 1]) left--;
         while (right + 1 < open.length && open[right + 1]) right++;
+        if (right < lastX) continue;
         const w = right - left + 1, h = bottom - top + 1;
         if (w * h > best.w * best.h) best = { x: left, y: top, w, h };
       }
@@ -225,7 +226,7 @@
     }
     const start = { x: startRoom.x + 2, y: startRoom.y + 2 };
     const boss = center(bossRoom);
-    const enclosure = findBossEnclosure(grid, boss);
+    const enclosure = findBossEnclosure(grid, bossRoom);
     const exit = { tiles: exitTiles, unlocked: false, occupied: false, bumped: false };
     const barriers = [];
     for (let x = enclosure.x; x < enclosure.x + enclosure.w; x++) {

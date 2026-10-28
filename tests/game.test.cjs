@@ -828,7 +828,7 @@ test('the two colored exit squares disappear when unlocked', () => {
   assert.equal(g.canvasCalls.some((call) => call.fillStyle === '#4d99d4' || call.fillStyle === '#d7a94d'), false);
 });
 
-test('enclosures find the maximum rectangle containing the spawn in irregular maps', () => {
+test('enclosures find the maximum rectangle containing the full boss room in irregular maps', () => {
   const g = loadGame();
   for (let seed = 1; seed <= 80; seed++) {
     let value = seed;
@@ -836,18 +836,18 @@ test('enclosures find the maximum rectangle containing the spawn in irregular ma
       value = (Math.imul(value, 1664525) + 1013904223) >>> 0;
       return value % 5 === 0 ? '#' : '.';
     }));
-    grid[3][3] = '.';
+    for (let y = 2; y <= 3; y++) for (let x = 2; x <= 3; x++) grid[y][x] = '.';
     let maxArea = 0;
-    for (let top = 0; top <= 3; top++) for (let bottom = 3; bottom < 6; bottom++) {
-      for (let left = 0; left <= 3; left++) for (let right = 3; right < 7; right++) {
+    for (let top = 0; top <= 2; top++) for (let bottom = 3; bottom < 6; bottom++) {
+      for (let left = 0; left <= 2; left++) for (let right = 3; right < 7; right++) {
         let clear = true;
         for (let y = top; y <= bottom; y++) for (let x = left; x <= right; x++) if (grid[y][x] !== '.') clear = false;
         if (clear) maxArea = Math.max(maxArea, (bottom - top + 1) * (right - left + 1));
       }
     }
-    const r = g.findBossEnclosure(grid, { x: 3.5, y: 3.5 });
+    const r = g.findBossEnclosure(grid, { x: 2, y: 2, w: 2, h: 2 });
     assert.equal(r.w * r.h, maxArea, `seed ${seed}`);
-    assert.ok(r.x <= 3 && r.x + r.w > 3 && r.y <= 3 && r.y + r.h > 3);
+    assert.ok(r.x <= 2 && r.x + r.w > 3 && r.y <= 2 && r.y + r.h > 3);
     for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) assert.equal(grid[y][x], '.');
   }
 });
@@ -859,6 +859,7 @@ test('generated enclosures expand with the floor and move barriers to the new pe
     g.game.runSeed = seed;
     const map = g.generateMap(floor), r = map.bossRoom;
     assert.ok(r.w * r.h >= 99);
+    assert.ok(r.x <= 29 && r.y <= 18 && r.x + r.w >= 40 && r.y + r.h >= 27, "the complete original boss room is enclosed");
     if (r.w * r.h > 99) expanded++;
     assert.ok(map.boss.x >= r.x && map.boss.x < r.x + r.w && map.boss.y >= r.y && map.boss.y < r.y + r.h);
     for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) assert.equal(map.grid[y][x], '.');
@@ -942,4 +943,16 @@ test('larger slime hitboxes affect contact, sword hits and arena containment', (
   Object.assign(boss, { x: r.x + .58, y: r.y + 2 });
   g.tryMove(boss, -.1, 0, g.enemyRadius(boss));
   assert.equal(boss.x, r.x + .58, 'larger body remains inside the enclosure');
+});
+
+test('a long hallway cannot replace the full boss room even when its area is larger', () => {
+  const g = loadGame();
+  const grid = Array.from({ length: 11 }, () => Array(31).fill('#'));
+  const room = { x: 13, y: 2, w: 5, h: 7 };
+  for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) grid[y][x] = '.';
+  for (let y = 4; y <= 6; y++) for (let x = 1; x < 30; x++) grid[y][x] = '.';
+  // A full-width extension is included, but the much larger thin corridor is excluded.
+  for (let x = 12; x < 19; x++) for (let y = 2; y < 9; y++) grid[y][x] = '.';
+  const result = g.findBossEnclosure(grid, room);
+  assert.deepEqual({ ...result }, { x: 12, y: 2, w: 7, h: 7 });
 });
