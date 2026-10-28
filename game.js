@@ -18,6 +18,7 @@
   // shadow wedges. Farther cells still use the full raycast mask.
   const PLAYER_LIGHT_RADIUS = 1.45;
   const PLAYER_CELL_RADIUS = 1;
+  const TERRAIN_SHADOW = 'rgba(0,0,0,.78)';
   const KING_DETECT_RANGE = 4;
   const KING_SLASH_RANGE = 2;
   const KING_SLASH_ARC = Math.PI / 2;
@@ -441,10 +442,16 @@
     game.rayCache?.set(cacheKey, visibleFloor);
     return visibleFloor;
   }
-  function cellIsVisible(targetX, targetY) {
-    return getCellVisibility(targetX, targetY).visible;
+  function pointIsVisible(x, y) {
+    const cellX = Math.floor(x), cellY = Math.floor(y);
+    const visibility = getCellVisibility(cellX, cellY);
+    if (!visibility.visible) return false;
+    if (visibility.full) return true;
+    const grid = visibility.grid;
+    const sampleX = Math.min(grid - 1, Math.floor((x - cellX) * grid));
+    const sampleY = Math.min(grid - 1, Math.floor((y - cellY) * grid));
+    return visibility.mask.includes(sampleY * grid + sampleX);
   }
-  function pointIsVisible(x, y) { return cellIsVisible(Math.floor(x), Math.floor(y)); }
   function render() {
     const { w, h } = screenSize(); if (!w || !h) return; ctx.clearRect(0, 0, w, h); const { tile, ox, oy } = tileMetrics(); const palette = game.theme.palette; const shakeX = game.shake ? (Math.random() - .5) * game.shake * 22 : 0; const shakeY = game.shake ? (Math.random() - .5) * game.shake * 22 : 0; ctx.save(); ctx.translate(shakeX, shakeY);
     ctx.fillStyle = palette.void; ctx.fillRect(-20, -20, w + 40, h + 40);
@@ -460,7 +467,9 @@
       const visibility = getCellVisibility(x, y);
       const visible = visibility.visible;
       const stableWall = game.map[y][x] === '#' && previousVisibleCells.has(key) && !visible;
-      if (visible || stableWall) { if (visible) game.visibleCells.add(key); drawTile(x, y, tile, ox, oy, visibility); }
+      if (visible) game.visibleCells.add(key);
+      // Terrain remains readable in deep shadow; objects still use the ray mask.
+      drawTile(x, y, tile, ox, oy, stableWall ? { ...visibility, full: true } : visibility);
     }
     game.chests.forEach((chest) => { if (pointIsVisible(chest.x, chest.y)) drawChest(chest, tile, ox, oy); }); game.enemies.forEach((enemy) => { if (pointIsVisible(enemy.x, enemy.y)) drawEnemy(enemy, tile, ox, oy); }); drawPlayer(tile, ox, oy); game.particles.forEach((particle) => { if (!pointIsVisible(particle.x, particle.y)) return; const s = worldToScreen(particle.x, particle.y); ctx.globalAlpha = Math.max(0, particle.life / particle.maxLife); ctx.fillStyle = particle.color; ctx.fillRect(s.x - particle.size * tile / 2, s.y - particle.size * tile / 2, particle.size * tile, particle.size * tile); }); ctx.globalAlpha = 1; ctx.restore(); if (game.flash) { ctx.fillStyle = `rgba(255,${game.flash > .1 ? 150 : 210},${game.flash > .1 ? 105 : 190},${game.flash * 1.2})`; ctx.fillRect(0, 0, w, h); }
   }
@@ -472,23 +481,21 @@
     if (cell === '#') {
       ctx.fillStyle = palette.wall;
       ctx.fillRect(px, py, tile + .5, tile + .5);
+      if (!visibility.full) { ctx.fillStyle = TERRAIN_SHADOW; ctx.fillRect(px, py, tile + .5, tile + .5); }
       return;
     }
 
     const floorColor = (x * 7 + y * 13) % 4 === 0 ? palette.floorAlt : palette.floor;
-    if (visibility.full || !visibility.mask?.length) {
-      if (visibility.full) {
-        ctx.fillStyle = floorColor;
-        ctx.fillRect(px, py, tile + .5, tile + .5);
-      }
-    } else {
-      // Paint the whole tile first so hidden subcells form one continuous
-      // shadow instead of exposing small void-colored gaps between samples.
-      ctx.fillStyle = palette.void;
+    ctx.fillStyle = floorColor;
+    ctx.fillRect(px, py, tile + .5, tile + .5);
+    if (!visibility.full) {
+      // Keep the floor's color underneath the shadow, then light only the
+      // subcells reached by the raycast. Fully hidden tiles stay darkened.
+      ctx.fillStyle = TERRAIN_SHADOW;
       ctx.fillRect(px, py, tile + .5, tile + .5);
       ctx.fillStyle = floorColor;
       const subTile = tile / visibility.grid;
-      visibility.mask.forEach((index) => {
+      (visibility.mask || []).forEach((index) => {
         const subX = index % visibility.grid;
         const subY = Math.floor(index / visibility.grid);
         ctx.fillRect(px + subX * subTile, py + subY * subTile, subTile + .8, subTile + .8);

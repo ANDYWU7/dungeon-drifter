@@ -9,6 +9,8 @@ function loadGame(storage = new Map(), storageUnavailable = false) {
   const listeners = new Map();
   const frames = new Map();
   const timers = new Map();
+  const canvasCalls = [];
+  const context2d = new Proxy({}, { get(target, method) { return method in target ? target[method] : (...args) => canvasCalls.push({ method, args, fillStyle: target.fillStyle }); } });
   let nextId = 1;
   function makeNode() {
     const classes = new Set();
@@ -25,7 +27,7 @@ function loadGame(storage = new Map(), storageUnavailable = false) {
       ...makeNode(),
       addEventListener(type, handler) { listeners.set(`${id}:${type}`, handler); },
       getBoundingClientRect() { return { width: 960, height: 540 }; },
-      getContext() { return new Proxy({}, { get: () => () => {} }); }
+      getContext() { return context2d; }
     });
     return nodes.get(id);
   }
@@ -46,8 +48,8 @@ function loadGame(storage = new Map(), storageUnavailable = false) {
     clearTimeout(id) { timers.delete(id); }
   });
   const source = fs.readFileSync(path.join(__dirname, '..', 'game.js'), 'utf8');
-  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `globalThis.api = { game, input, settings, startGame, pauseGame, resumeGame, returnToMenu, completeBoss, update, attack, dash, usePotion, generateMap, endRun, createEnemy, updateEnemy, drawEnemy, collectGear, defeatEnemy, openChest, beginFloor }; })();`), context);
-  return { ...context.api, frames, timers, listeners, document, node, storage };
+  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `globalThis.api = { game, input, settings, startGame, pauseGame, resumeGame, returnToMenu, completeBoss, update, attack, dash, usePotion, generateMap, endRun, createEnemy, updateEnemy, drawEnemy, collectGear, defeatEnemy, openChest, beginFloor, render, pointIsVisible, getCellVisibility, tileMetrics }; })();`), context);
+  return { ...context.api, frames, timers, listeners, document, node, storage, canvasCalls };
 }
 
 test('pause/resume and restart keep a single animation loop', () => {
@@ -389,4 +391,48 @@ test('empty recaps, invalid records, unavailable storage, and ending a paused ru
   assert.match(g.node('result-copy').textContent, /You ended the run/);
   g.listeners.get('result-menu-button:click')();
   assert.equal(g.node('menu-best-gold').textContent, 20);
+});
+
+test('shadow draws dark terrain while hiding enemies and chests behind a wall', () => {
+  const g = loadGame();
+  g.startGame();
+  g.game.map = Array.from({ length: 13 }, () => Array(15).fill('.'));
+  g.game.mapWidth = 15; g.game.mapHeight = 13;
+  for (const row of g.game.map) row[6] = '#';
+  g.game.map[6][9] = '#';
+  Object.assign(g.game.player, { x: 4.5, y: 6.5 });
+  g.game.chests = [{ x: 5.5, y: 6.5 }, { x: 8.5, y: 6.5 }];
+  g.game.enemies = [
+    g.createEnemy({ kind: 'bat', hp: 20 }, 4.5, 5.5),
+    g.createEnemy({ kind: 'bat', hp: 20 }, 8.5, 7.5)
+  ];
+  g.canvasCalls.length = 0;
+  g.render();
+  const { tile, ox, oy } = g.tileMetrics();
+  const paintedAt = (x, y) => g.canvasCalls.filter((call) => call.method === 'fillRect' && call.args[0] === ox + x * tile && call.args[1] === oy + y * tile);
+  for (const [x, y, color] of [[8, 6, g.game.theme.palette.floor], [9, 6, g.game.theme.palette.wall]]) {
+    const fills = paintedAt(x, y);
+    assert.ok(fills.some((call) => call.fillStyle === color), 'hidden terrain still has its base color');
+    assert.ok(fills.some((call) => call.fillStyle === 'rgba(0,0,0,.78)'), 'hidden terrain is heavily darkened');
+  }
+  const drawnAt = (x, y) => g.canvasCalls.some((call) => call.method === 'translate' && call.args[0] === ox + x * tile && call.args[1] === oy + y * tile);
+  assert.equal(drawnAt(5.5, 6.5), true, 'lit chest is drawn');
+  assert.equal(drawnAt(4.5, 5.5), true, 'lit enemy is drawn');
+  assert.equal(drawnAt(8.5, 6.5), false, 'shadowed chest stays hidden');
+  assert.equal(drawnAt(8.5, 7.5), false, 'shadowed enemy stays hidden');
+});
+
+test('partly lit tiles do not reveal objects positioned in their shadowed portion', () => {
+  const g = loadGame();
+  g.startGame();
+  g.game.map = Array.from({ length: 13 }, () => Array(15).fill('.'));
+  g.game.mapWidth = 15; g.game.mapHeight = 13;
+  for (let y = 6; y < 13; y++) g.game.map[y][6] = '#';
+  Object.assign(g.game.player, { x: 4.5, y: 6.5 });
+  g.game.rayCache = new Map();
+  const tile = g.getCellVisibility(7, 5);
+  assert.equal(tile.visible, true);
+  assert.equal(tile.full, false);
+  assert.equal(g.pointIsVisible(7.8, 5.1), true);
+  assert.equal(g.pointIsVisible(7.8, 5.9), false);
 });
