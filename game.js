@@ -291,6 +291,9 @@
     if (!input.joystick.active) { x = (input.keys.has('d') || input.keys.has('arrowright') ? 1 : 0) - (input.keys.has('a') || input.keys.has('arrowleft') ? 1 : 0); y = (input.keys.has('s') || input.keys.has('arrowdown') ? 1 : 0) - (input.keys.has('w') || input.keys.has('arrowup') ? 1 : 0); }
     const mag = Math.hypot(x, y); return mag > 1 ? { x: x / mag, y: y / mag, mag: 1 } : { x, y, mag };
   }
+  function enemySizeScale(enemy) { return enemy.kind === 'giant-slime' || enemy.kind === 'slime' ? 1.5 : 1; }
+  function enemyRadius(enemy) { return (enemy.boss ? .38 : .25) * enemySizeScale(enemy); }
+  function extraEnemyReach(enemy) { return enemyRadius(enemy) - (enemy.boss ? .38 : .25); }
   function attack() {
     if (!game.running || game.paused || game.player.dashTime > 0 || game.player.attackCooldown > 0) return;
     game.player.attackCooldown = .5; game.slash = .22; const p = game.player; const dir = Math.hypot(p.facingX, p.facingY) || 1; const fx = p.facingX / dir; const fy = p.facingY / dir; const damage = p.weapon?.damage ?? 10;
@@ -299,7 +302,7 @@
     game.enemies.forEach((enemy) => {
       const dx = enemy.x - p.x, dy = enemy.y - p.y, dist = Math.hypot(dx, dy);
       const dot = (dx * fx + dy * fy) / (dist || 1);
-      if (dist >= (enemy.boss ? 1.65 : 1.35) || dot <= -.12) return;
+      if (dist >= (enemy.boss ? 1.65 : 1.35) + extraEnemyReach(enemy) || dot <= -.12) return;
       if ((enemy.boss || enemy.bossFamily) && game.bossInsideTime < 2) { blockedBoss = true; return; }
       enemy.hp -= damage; enemy.hitFlash = .14; hit = true;
       burst(enemy.x, enemy.y, enemy.boss ? game.theme.palette.bossLight : game.theme.palette.accent, 8);
@@ -325,12 +328,12 @@
   }
   function spawnSlimeSplit(source) {
     const splitLevel = (source.splitLevel || 0) + 1; if (splitLevel > 3) return; const hp = Math.max(10, Math.floor(source.maxHp / 2));
-    [[-.65, 0], [.65, 0]].forEach(([offsetX, offsetY], index) => { const spot = findNearbyFloor(source.x + offsetX, source.y + offsetY, source.arenaBound); const profile = { kind: 'slime', name: 'SLIME', hp, damage: 10, goldMin: 5, goldMax: 15 }; game.enemies.push(createEnemy(profile, spot.x, spot.y, { id: `slime-${game.floor}-${splitLevel}-${index}-${Date.now()}`, splitLevel, bossFamily: true, arenaBound: source.arenaBound })); });
+    [[-.65, 0], [.65, 0]].forEach(([offsetX, offsetY], index) => { const spot = findNearbyFloor(source.x + offsetX, source.y + offsetY, source.arenaBound, .375); const profile = { kind: 'slime', name: 'SLIME', hp, damage: 10, goldMin: 5, goldMax: 15 }; game.enemies.push(createEnemy(profile, spot.x, spot.y, { id: `slime-${game.floor}-${splitLevel}-${index}-${Date.now()}`, splitLevel, bossFamily: true, arenaBound: source.arenaBound })); });
   }
-  function findNearbyFloor(x, y, arenaBound = false) {
+  function findNearbyFloor(x, y, arenaBound = false, radius = .25) {
     if (arenaBound) { const room = game.bossRoom; x = Math.max(room.x + .4, Math.min(room.x + room.w - .4, x)); y = Math.max(room.y + .4, Math.min(room.y + room.h - .4, y)); }
     const candidates = [[x, y], [x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1], [x + .7, y + .7], [x - .7, y - .7]];
-    const spot = candidates.find(([cx, cy]) => canMove(cx, cy, .25) && (!arenaBound || insideBossRoom(cx, cy, .25)));
+    const spot = candidates.find(([cx, cy]) => canMove(cx, cy, radius) && (!arenaBound || insideBossRoom(cx, cy, radius)));
     return spot ? { x: spot[0], y: spot[1] } : arenaBound ? { ...game.bossPosition } : { x: game.player.x, y: game.player.y };
   }
   function completeBoss(source = game.bossPosition) {
@@ -402,7 +405,7 @@
     }
     if (enemy.kind === 'king') { enemy.healTimer -= dt; if (enemy.healTimer <= 0) { const healed = Math.min(KING_HEAL_AMOUNT, enemy.maxHp - enemy.hp); enemy.hp += healed; enemy.healTimer += KING_HEAL_INTERVAL; if (healed > 0) { burst(enemy.x, enemy.y, game.theme.palette.bossLight, 18); toast(`The king recovered ${healed} health.`); tone(380, .16, 'sine'); } } }
     const kingStartingWindup = enemy.kind === 'king' && dist <= KING_DETECT_RANGE && enemy.attackCooldown <= 0;
-    const stopDistance = enemy.kind === 'giant-slime' || enemy.kind === 'slime' ? .45 : enemy.boss ? 1.35 : .8; if (!kingCommitted && !kingStartingWindup && dist < aggro && dist > stopDistance) { const speed = enemy.boss ? .63 : enemy.kind === 'knight' || enemy.kind === 'prisoner' ? .72 : enemy.kind === 'bat' ? 1.15 : .9; tryMove(enemy, dx / dist * speed * dt, dy / dist * speed * dt, enemy.boss ? .38 : .25); }
+    const stopDistance = enemy.kind === 'giant-slime' || enemy.kind === 'slime' ? .45 + extraEnemyReach(enemy) : enemy.boss ? 1.35 : .8; if (!kingCommitted && !kingStartingWindup && dist < aggro && dist > stopDistance) { const speed = enemy.boss ? .63 : enemy.kind === 'knight' || enemy.kind === 'prisoner' ? .72 : enemy.kind === 'bat' ? 1.15 : .9; tryMove(enemy, dx / dist * speed * dt, dy / dist * speed * dt, enemyRadius(enemy)); }
     if (enemy.kind === 'warden') return;
     if (enemy.kind === 'king') {
       if (enemy.kingWindup > 0) {
@@ -427,7 +430,7 @@
       }
       return;
     }
-    const contactRange = enemy.kind === 'giant-slime' || enemy.kind === 'slime' ? .7 : enemy.boss ? 1.45 : .82;
+    const contactRange = enemy.kind === 'giant-slime' || enemy.kind === 'slime' ? .7 + extraEnemyReach(enemy) : enemy.boss ? 1.45 : .82;
     if (dist < contactRange && enemy.attackCooldown <= 0 && p.invincible <= 0) { p.hp = Math.max(0, p.hp - enemy.damage); enemy.attackCooldown = enemy.boss ? 1.25 : 1.05; game.shake = settings.shake ? .2 : 0; game.flash = settings.flashes ? .05 : 0; burst(p.x, p.y, game.theme.palette.bossLight, 6); tone(90, .08, 'square'); if (p.hp <= 0) endRun(false, 'You fainted'); }
     else if (enemy.attackCooldown <= 0) enemy.attackCooldown = enemy.boss ? 1.2 : .8;
   }
@@ -691,7 +694,7 @@
   }
   function drawChest(chest, tile, ox, oy) { const s = worldToScreen(chest.x, chest.y); const palette = game.theme.palette; ctx.save(); ctx.translate(s.x, s.y); ctx.fillStyle = chest.open ? palette.grout : palette.chest; ctx.fillRect(-tile * .25, -tile * .17, tile * .5, tile * .34); ctx.fillStyle = chest.open ? palette.wallTop : palette.accent; ctx.fillRect(-tile * .23, -tile * .19, tile * .46, tile * .1); ctx.fillStyle = palette.wall; ctx.fillRect(-tile * .04, -tile * .06, tile * .08, tile * .13); ctx.restore(); }
   function drawEnemy(enemy, tile, ox, oy) {
-    const s = worldToScreen(enemy.x, enemy.y); const palette = game.theme.palette; const slimeRadius = enemy.kind === 'slime' ? Math.max(.11, .3 - (enemy.splitLevel || 1) * .055) : .25; const r = tile * (enemy.boss ? .46 : slimeRadius); ctx.save(); ctx.translate(s.x, s.y); const ink = palette.wall; const cloth = enemy.hitFlash ? palette.playerLight : enemy.kind === 'knight' || enemy.kind === 'guard' ? '#737a7a' : enemy.kind === 'peasant' ? '#78604f' : enemy.kind === 'prisoner' ? '#a09a87' : palette.enemy;
+    const s = worldToScreen(enemy.x, enemy.y); const palette = game.theme.palette; const slimeRadius = enemy.kind === 'slime' ? Math.max(.11, .3 - (enemy.splitLevel || 1) * .055) : .25; const r = tile * (enemy.boss ? .46 : slimeRadius) * enemySizeScale(enemy); ctx.save(); ctx.translate(s.x, s.y); const ink = palette.wall; const cloth = enemy.hitFlash ? palette.playerLight : enemy.kind === 'knight' || enemy.kind === 'guard' ? '#737a7a' : enemy.kind === 'peasant' ? '#78604f' : enemy.kind === 'prisoner' ? '#a09a87' : palette.enemy;
     if (enemy.kind === 'bat') {
       ctx.fillStyle = cloth; ctx.beginPath(); ctx.moveTo(-r * .15, 0); ctx.lineTo(-r * 1.55, -r * .7); ctx.lineTo(-r * 1.2, r * .6); ctx.lineTo(-r * .25, r * .2); ctx.lineTo(r * .25, r * .2); ctx.lineTo(r * 1.2, r * .6); ctx.lineTo(r * 1.55, -r * .7); ctx.lineTo(r * .15, 0); ctx.closePath(); ctx.fill(); ctx.fillStyle = palette.boss; ctx.beginPath(); ctx.ellipse(0, 0, r * .45, r * .7, 0, 0, TAU); ctx.fill(); ctx.fillStyle = palette.playerLight; ctx.fillRect(-r * .22, -r * .15, r * .12, r * .12); ctx.fillRect(r * .1, -r * .15, r * .12, r * .12);
     } else if (enemy.kind === 'skeleton') {

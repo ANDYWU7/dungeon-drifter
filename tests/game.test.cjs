@@ -49,7 +49,7 @@ function loadGame(storage = new Map(), storageUnavailable = false, fixedRandom) 
     clearTimeout(id) { timers.delete(id); }
   });
   const source = fs.readFileSync(path.join(__dirname, '..', 'game.js'), 'utf8');
-  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `globalThis.api = { game, input, settings, startGame, pauseGame, resumeGame, returnToMenu, completeBoss, update, attack, dash, usePotion, generateMap, endRun, createEnemy, updateEnemy, drawEnemy, collectGear, defeatEnemy, openChest, beginFloor, render, pointIsVisible, getCellVisibility, tileMetrics, wallIsBright, isWall, canMove, updateExit, insideBossRoom, tryMove, summonGuards, drawTile, findBossEnclosure }; })();`), context);
+  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `globalThis.api = { game, input, settings, startGame, pauseGame, resumeGame, returnToMenu, completeBoss, update, attack, dash, usePotion, generateMap, endRun, createEnemy, updateEnemy, drawEnemy, collectGear, defeatEnemy, openChest, beginFloor, render, pointIsVisible, getCellVisibility, tileMetrics, wallIsBright, isWall, canMove, updateExit, insideBossRoom, tryMove, summonGuards, drawTile, findBossEnclosure, enemyRadius }; })();`), context);
   return { ...context.api, frames, timers, listeners, document, node, storage, canvasCalls };
 }
 
@@ -905,4 +905,41 @@ test('slime descendants share the delay while guards remain damageable', () => {
   g.game.enemies = [slime, guard];
   g.attack(); assert.equal(slime.hp, 100); assert.ok(guard.hp < 100);
   g.game.bossInsideTime = 2; p.attackCooldown = 0; g.attack(); assert.ok(slime.hp < 100);
+});
+
+test('giant slime and all split sizes grow 1.5 times without changing combat stats', () => {
+  const g = loadGame(); g.startGame();
+  const giant = g.game.enemies.find((e) => e.boss);
+  assert.equal(giant.hp, 250); assert.equal(giant.damage, 40);
+  assert.ok(Math.abs(g.enemyRadius(giant) - .57) < 1e-9);
+  for (const level of [0, 1, 2, 3]) {
+    const enemy = level === 0 ? giant : g.createEnemy({ kind: 'slime', hp: Math.max(10, Math.floor(250 / 2 ** level)), damage: 10 }, giant.x, giant.y, { splitLevel: level, bossFamily: true });
+    if (level) assert.equal(g.enemyRadius(enemy), .375);
+    g.canvasCalls.length = 0;
+    g.drawEnemy(enemy, 40, 0, 0);
+    const eye = g.canvasCalls.find((call) => call.method === 'arc');
+    const oldRadius = level === 0 ? .46 : Math.max(.11, .3 - level * .055);
+    assert.ok(Math.abs(eye.args[2] - 40 * oldRadius * 1.5 * .1) < 1e-9);
+    assert.equal(enemy.damage, level === 0 ? 40 : 10);
+    assert.equal(enemy.hp, level === 0 ? 250 : Math.max(10, Math.floor(250 / 2 ** level)));
+  }
+  assert.equal(g.enemyRadius({ kind: 'king', boss: true }), .38);
+  assert.equal(g.enemyRadius({ kind: 'guard' }), .25);
+});
+
+test('larger slime hitboxes affect contact, sword hits and arena containment', () => {
+  const g = loadGame(); g.startGame();
+  const boss = g.game.enemies.find((e) => e.boss), p = g.game.player;
+  g.game.enemies = [boss];
+  Object.assign(p, { x: boss.x - 1.75, y: boss.y, facingX: 1, facingY: 0 });
+  g.game.bossInsideTime = 2;
+  g.attack(); assert.equal(boss.hp, 240, 'sword can reach the larger body');
+  Object.assign(p, { x: boss.x - .8, y: boss.y, invincible: 0 });
+  boss.attackCooldown = 0;
+  g.updateEnemy(boss, .001);
+  assert.equal(p.hp, p.maxHp - 40, 'larger contact range keeps the same damage');
+  const r = g.game.bossRoom;
+  Object.assign(boss, { x: r.x + .58, y: r.y + 2 });
+  g.tryMove(boss, -.1, 0, g.enemyRadius(boss));
+  assert.equal(boss.x, r.x + .58, 'larger body remains inside the enclosure');
 });
