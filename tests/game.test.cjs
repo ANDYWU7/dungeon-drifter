@@ -532,3 +532,43 @@ test('void receives no tile borders and remains outside the combat flash drawing
   assert.ok(flashIndex > clipIndex);
   assert.equal(g.canvasCalls.at(-1).method, 'restore', 'the terrain clip is retained through the flash');
 });
+
+test('unobstructed nearby diagonal floor tiles have no artificial shadow squares', () => {
+  const g = loadGame();
+  g.startGame();
+  g.game.map = Array.from({ length: 9 }, () => Array(9).fill('.'));
+  g.game.mapWidth = 9; g.game.mapHeight = 9;
+  const positions = [4.05, 4.25, 4.5, 4.75, 4.95, 4 + 6.5 / 12];
+  for (const x of positions) for (const y of positions) {
+    Object.assign(g.game.player, { x, y });
+    g.game.rayCache = new Map();
+    for (let ty = 3; ty <= 5; ty++) for (let tx = 3; tx <= 5; tx++) {
+      assert.equal(g.getCellVisibility(tx, ty).full, true, `player ${x},${y}, tile ${tx},${ty}`);
+    }
+  }
+});
+
+test('nearby walls cast real shadows instead of being overridden by player light', () => {
+  const g = loadGame();
+  g.startGame();
+  g.game.map = Array.from({ length: 9 }, () => Array(9).fill('.'));
+  g.game.mapWidth = 9; g.game.mapHeight = 9;
+  g.game.map[4][5] = '#'; g.game.map[5][4] = '#';
+  Object.assign(g.game.player, { x: 4.75, y: 4.75 });
+  g.game.rayCache = new Map();
+  assert.equal(g.pointIsVisible(5.25, 5.25), false, 'a sealed diagonal corner blocks sight within the old light radius');
+  assert.equal(g.getCellVisibility(5, 5).visible, false);
+});
+
+test('grazing one nearby wall does not create a false diagonal shadow wedge', () => {
+  const g = loadGame();
+  g.startGame();
+  g.game.map = Array.from({ length: 9 }, () => Array(9).fill('.'));
+  g.game.mapWidth = 9; g.game.mapHeight = 9;
+  g.game.map[4][5] = '#';
+  Object.assign(g.game.player, { x: 4.75, y: 4.75 });
+  g.game.rayCache = new Map();
+  assert.equal(g.pointIsVisible(5.25, 5.25), true, 'a ray can graze one wall corner');
+  assert.equal(g.pointIsVisible(5.7, 5.1), false, 'the same wall still blocks rays that cross its interior');
+  assert.equal(g.getCellVisibility(5, 5).full, false, 'nearby partially blocked tiles are not automatically lit');
+});

@@ -14,10 +14,6 @@
   const VISIBILITY_SAMPLES = 7;
   const FLOOR_VISIBILITY_GRID = 12;
   const RAY_EPSILON = 0.00001;
-  // Keep the player and the immediately surrounding floor free of sub-cell
-  // shadow wedges. Farther cells still use the full raycast mask.
-  const PLAYER_LIGHT_RADIUS = 1.45;
-  const PLAYER_CELL_RADIUS = 1;
   const TERRAIN_SHADOW = 'rgba(0,0,0,.78)';
   const WALL_SHADOW = 'rgba(0,0,0,.18)';
   const VOID_COLOR = '#000000';
@@ -349,7 +345,7 @@
     const rayDX = pointX - startX;
     const rayDY = pointY - startY;
     const distance = Math.hypot(rayDX, rayDY);
-    if (!distance || distance > VISIBILITY_DISTANCE) return false;
+    if (distance > VISIBILITY_DISTANCE) return false;
 
     let cellX = Math.floor(startX);
     let cellY = Math.floor(startY);
@@ -374,12 +370,13 @@
         cellY += stepY;
         sideY += deltaY;
       } else {
-        // A corner crossing touches both cells. Test both so diagonal walls
-        // cannot be seen through because of a single precision edge case.
+        // Light a wall touched at a corner, but never see through two walls
+        // that seal a diagonal passage. Grazing just one wall stays clear.
         const cornerX = cellX + stepX;
         const cornerY = cellY + stepY;
         if (stepX && cornerX === targetX && cellY === targetY) return true;
         if (stepY && cellX === targetX && cornerY === targetY) return true;
+        if (isWall(cornerX + .5, cellY + .5) && isWall(cellX + .5, cornerY + .5)) return false;
         // Treat an exact grid-corner crossing as a single diagonal step. The
         // next cell is still checked immediately below, so normal walls stop
         // the ray, but a corner cannot create an artificial dark wedge.
@@ -391,7 +388,10 @@
 
       if (cellX === targetX && cellY === targetY) return true;
       if (isWall(cellX + .5, cellY + .5)) return false;
-      if (Math.min(sideX, sideY) > distance + RAY_EPSILON) return false;
+      // Grid crossings use a fraction of the ray, so its endpoint is t = 1.
+      // Comparing these fractions to world distance cut short nearby diagonals
+      // and left small shadow squares next to the player.
+      if (Math.min(sideX, sideY) > 1 + RAY_EPSILON) return false;
     }
     return false;
   }
@@ -410,17 +410,6 @@
       const hidden = { visible: false, full: false, mask: [] };
       game.rayCache?.set(cacheKey, hidden);
       return hidden;
-    }
-
-    // Keep the cells immediately around the player solid. Applying the
-    // sub-cell mask here creates artificial diagonal wedges around the player
-    // even though the player is already occupying and illuminating this area.
-    const playerCellX = Math.floor(game.player.x);
-    const playerCellY = Math.floor(game.player.y);
-    if (Math.abs(targetX - playerCellX) <= PLAYER_CELL_RADIUS && Math.abs(targetY - playerCellY) <= PLAYER_CELL_RADIUS) {
-      const nearby = { visible: true, full: true, mask: [], grid: FLOOR_VISIBILITY_GRID };
-      game.rayCache?.set(cacheKey, nearby);
-      return nearby;
     }
 
     // Walls are intentionally binary: one ray touching a wall lights up the
@@ -450,8 +439,7 @@
       for (let sampleX = 0; sampleX < samples; sampleX++) {
         const pointX = targetX + (sampleX + .5) / samples;
         const pointY = targetY + (sampleY + .5) / samples;
-        const nearPlayer = Math.hypot(pointX - game.player.x, pointY - game.player.y) <= PLAYER_LIGHT_RADIUS;
-        if (nearPlayer || rayReachesCell(targetX, targetY, pointX, pointY)) mask.push(sampleY * samples + sampleX);
+        if (rayReachesCell(targetX, targetY, pointX, pointY)) mask.push(sampleY * samples + sampleX);
       }
     }
     const visibleFloor = { visible: mask.length > 0, full: mask.length === samples * samples, mask, grid: samples };
