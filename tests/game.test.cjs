@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function loadGame(storage = new Map(), storageUnavailable = false) {
+function loadGame(storage = new Map(), storageUnavailable = false, fixedRandom) {
   const nodes = new Map();
   const listeners = new Map();
   const frames = new Map();
@@ -17,7 +17,7 @@ function loadGame(storage = new Map(), storageUnavailable = false) {
     return {
       children: [], style: {},
       classList: { add(name) { classes.add(name); }, remove(name) { classes.delete(name); }, toggle(name, on) { if (on) classes.add(name); else classes.delete(name); }, contains: (name) => classes.has(name) },
-      setAttribute() {}, querySelector() { return {}; }, focus() {}, scrollTo() {},
+      setAttribute() {}, querySelector() { return {}; }, focus() {}, scrollTo() {}, setPointerCapture() {},
       append(...children) { this.children.push(...children); },
       replaceChildren(...children) { this.children = children; }
     };
@@ -38,6 +38,7 @@ function loadGame(storage = new Map(), storageUnavailable = false) {
     addEventListener(type, handler) { listeners.set(`document:${type}`, handler); }
   };
   const context = vm.createContext({ window, document, console, performance: { now: () => 1000 },
+    ...(fixedRandom === undefined ? {} : { Math: Object.assign(Object.create(Math), { random: () => fixedRandom }) }),
     localStorage: {
       getItem(key) { if (storageUnavailable) throw new Error('Storage unavailable'); return storage.get(key) ?? null; },
       setItem(key, value) { if (storageUnavailable) throw new Error('Storage unavailable'); storage.set(key, value); }
@@ -571,4 +572,69 @@ test('grazing one nearby wall does not create a false diagonal shadow wedge', ()
   assert.equal(g.pointIsVisible(5.25, 5.25), true, 'a ray can graze one wall corner');
   assert.equal(g.pointIsVisible(5.7, 5.1), false, 'the same wall still blocks rays that cross its interior');
   assert.equal(g.getCellVisibility(5, 5).full, false, 'nearby partially blocked tiles are not automatically lit');
+});
+
+test('equal and worse gear messages identify the equipment slot', () => {
+  for (const [roll, slot, label, name, stat, value] of [
+    [.15, 'weapon', 'weapon', 'wood bat', 'damage', 15],
+    [.26, 'chest', 'torso gear', 'leather tunic', 'armor', 15],
+    [.51, 'legs', 'leg gear', 'leather pants', 'armor', 10],
+    [.76, 'helmet', 'head gear', 'leather cap', 'armor', 5]
+  ]) for (const bonus of [0, 10]) {
+    const g = loadGame(new Map(), false, roll);
+    g.startGame();
+    const current = { name: 'CURRENT GEAR', slot, [stat]: value + bonus };
+    if (slot === 'weapon') { g.game.inventory.weapon = current; g.game.player.weapon = current; }
+    else g.game.inventory.armor[slot] = current;
+    g.openChest({ x: 5, y: 5, open: false });
+    assert.equal(g.node('game-toast').textContent, `You found a ${name}, but your current ${label} is the same or better.`);
+    assert.equal(slot === 'weapon' ? g.game.inventory.weapon : g.game.inventory.armor[slot], current);
+  }
+});
+
+test('running out of stamina announces exhaustion once and resets sprint', () => {
+  const g = loadGame();
+  g.startGame();
+  g.game.enemies = []; g.game.chests = [];
+  g.game.player.stamina = .1;
+  g.input.keys.add('d'); g.input.sprint = true;
+  g.update(.016);
+  assert.equal(g.game.player.stamina, 0);
+  assert.equal(g.game.player.sprintExhausted, true);
+  assert.equal(g.input.sprint, false);
+  assert.equal(g.node('game-toast').textContent, 'You are exhausted from running.');
+  g.update(.016);
+  assert.ok(g.game.player.stamina > 0);
+  assert.equal(g.node('game-toast').textContent, 'You are exhausted from running.');
+});
+
+test('exhaustion blocks keyboard and touch sprint and dash until full recovery', () => {
+  for (const holdSprint of [true, false]) {
+    const g = loadGame();
+    g.startGame(); g.game.enemies = []; g.game.chests = [];
+    g.settings.holdSprint = holdSprint;
+    const p = g.game.player;
+    const key = (key, code) => g.listeners.get('window:keydown')({ key, code, repeat: false, preventDefault() {} });
+    const touch = (id) => g.listeners.get(`${id}:pointerdown`)({ pointerId: 1, preventDefault() {} });
+    for (const stamina of [0, 27, 50, 99.9]) for (const attempt of [
+      () => key('Shift', 'ShiftLeft'), () => touch('sprint-button'),
+      () => key('q', 'KeyQ'), () => touch('dash-button')
+    ]) {
+      p.stamina = stamina; p.sprintExhausted = true;
+      attempt();
+      assert.equal(g.node('game-toast').textContent, 'Wait until you fully recover before doing this.');
+      assert.equal(p.stamina, stamina);
+      assert.equal(p.dashTime, 0);
+      assert.equal(p.invincible, 0);
+      assert.equal(g.input.sprint, false);
+    }
+    g.update(.016);
+    assert.equal(p.stamina, 100);
+    assert.equal(p.sprintExhausted, false);
+    touch('sprint-button');
+    assert.equal(g.input.sprint, true);
+    touch('dash-button');
+    assert.equal(p.stamina, 72);
+    assert.equal(p.dashTime, .18);
+  }
 });

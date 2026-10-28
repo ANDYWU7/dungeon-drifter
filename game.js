@@ -67,7 +67,14 @@
   }
   function setToggle(node, on) { node.classList.toggle('is-on', on); node.setAttribute('aria-checked', String(on)); node.querySelector('b').textContent = on ? 'ON' : 'OFF'; }
   function setSprint(active) { input.sprint = active; $('sprint-button').classList.toggle('is-active', active); }
-  function pressSprint() { if (settings.holdSprint) setSprint(true); else setSprint(!input.sprint); }
+  function exhaustionBlocksAction() {
+    const p = game.player;
+    if (p.stamina >= p.maxStamina) p.sprintExhausted = false;
+    if (!p.sprintExhausted) return false;
+    toast('Wait until you fully recover before doing this.');
+    return true;
+  }
+  function pressSprint() { if (!game.running || game.paused || exhaustionBlocksAction()) return; if (settings.holdSprint) setSprint(true); else setSprint(!input.sprint); }
   function releaseSprint() { if (settings.holdSprint) setSprint(false); }
   function resetSprint() { setSprint(false); }
   function resetInput() {
@@ -237,7 +244,7 @@
     game.enemies.forEach((enemy) => { const dx = enemy.x - p.x, dy = enemy.y - p.y, dist = Math.hypot(dx, dy); const dot = (dx * fx + dy * fy) / (dist || 1); if (dist < (enemy.boss ? 1.65 : 1.35) && dot > -.12) { enemy.hp -= damage; enemy.hitFlash = .14; hit = true; burst(enemy.x, enemy.y, enemy.boss ? game.theme.palette.bossLight : game.theme.palette.accent, 8); if (enemy.hp <= 0) defeatEnemy(enemy); } });
     game.enemies = game.enemies.filter((enemy) => enemy.hp > 0); if (game.bossFamilyActive && !game.enemies.some((enemy) => enemy.bossFamily)) completeBoss(); if (hit) { game.shake = settings.shake ? .16 : 0; game.flash = settings.flashes ? .06 : 0; tone(120, .09, 'square'); } else tone(240, .04, 'triangle');
   }
-  function dash() { if (!game.running || game.paused || game.player.stamina < 28 || game.player.dashTime > 0) return; const d = direction(); const dx = d.mag ? d.x : game.player.facingX; const dy = d.mag ? d.y : game.player.facingY; game.player.stamina -= 28; game.player.dashTime = .18; game.player.dashX = dx; game.player.dashY = dy; game.player.invincible = .28; burst(game.player.x, game.player.y, '#69d8cc', 7); tone(300, .08, 'sawtooth'); }
+  function dash() { if (!game.running || game.paused) return; if (exhaustionBlocksAction() || game.player.stamina < 28 || game.player.dashTime > 0) return; const d = direction(); const dx = d.mag ? d.x : game.player.facingX; const dy = d.mag ? d.y : game.player.facingY; game.player.stamina -= 28; game.player.dashTime = .18; game.player.dashX = dx; game.player.dashY = dy; game.player.invincible = .28; burst(game.player.x, game.player.y, '#69d8cc', 7); tone(300, .08, 'sawtooth'); }
   function usePotion() { const p = game.player; if (!game.running || game.paused || p.potions <= 0 || p.hp >= p.maxHp) return; p.potions--; p.hp = Math.min(p.maxHp, p.hp + 38); burst(p.x, p.y, '#f2bd57', 12); toast('You used a potion and restored 38 health.'); tone(520, .15, 'sine'); updateHud(); }
   function awardGold(enemy) { const amount = enemy.goldMin + Math.floor(Math.random() * (enemy.goldMax - enemy.goldMin + 1)); game.gold += amount; return amount; }
   function defeatEnemy(enemy) {
@@ -275,8 +282,9 @@
     const sprinting = input.sprint && !p.sprintExhausted && p.stamina > 0;
     const recoveryRate = 18 + (p.stamina / p.maxStamina) * 30;
     p.stamina = Math.min(p.maxStamina, p.stamina + (sprinting ? 9 : recoveryRate) * dt);
+    if (p.stamina >= p.maxStamina) p.sprintExhausted = false;
     const d = direction(); if (d.mag) { p.facingX = d.x; p.facingY = d.y; }
-    if (p.dashTime > 0) tryMove(p, p.dashX * 7 * dt, p.dashY * 7 * dt, .18); else if (d.mag) { const speed = sprinting ? 3.9 : 2.35; if (sprinting) { p.stamina = Math.max(0, p.stamina - 25 * dt); if (p.stamina <= 0) { p.stamina = 0; p.sprintExhausted = true; } } tryMove(p, d.x * speed * dt, d.y * speed * dt, .22); }
+    if (p.dashTime > 0) tryMove(p, p.dashX * 7 * dt, p.dashY * 7 * dt, .18); else if (d.mag) { const speed = sprinting ? 3.9 : 2.35; if (sprinting) { p.stamina = Math.max(0, p.stamina - 25 * dt); if (p.stamina <= 0) { p.stamina = 0; p.sprintExhausted = true; resetSprint(); toast('You are exhausted from running.'); } } tryMove(p, d.x * speed * dt, d.y * speed * dt, .22); }
     game.enemies.forEach((enemy) => updateEnemy(enemy, dt));
     game.chests.forEach((chest) => { if (!chest.open && Math.hypot(chest.x - p.x, chest.y - p.y) < .75) openChest(chest); });
     if (!game.bossAlerted && Math.hypot(game.bossPosition.x - p.x, game.bossPosition.y - p.y) < 4.1) { game.bossAlerted = true; $('boss-alert').classList.remove('hidden'); toast(`The ${game.profile.boss.name.toLowerCase()} is nearby.`); tone(70, .28, 'sawtooth'); }
@@ -330,7 +338,10 @@
     const current = item.slot === 'weapon' ? game.inventory.weapon : game.inventory.armor[item.slot]; const better = !current || (item.damage || item.armor) > (current.damage || current.armor);
     burst(chest.x, chest.y, game.theme.palette.chest, 14); tone(660, .13, 'sine');
     if (better) { if (item.slot === 'weapon') game.inventory.weapon = item; else game.inventory.armor[item.slot] = item; game.player.weapon = game.inventory.weapon; const previousMax = game.player.maxHp; game.player.maxHp = 100 + armorBonus(); if (game.player.maxHp > previousMax) game.player.hp += game.player.maxHp - previousMax; toast(`You equipped the ${item.name.toLowerCase()}.`); }
-    else toast(`You found a ${item.name.toLowerCase()}, but your current equipment is better.`);
+    else {
+      const slot = { weapon: 'weapon', chest: 'torso gear', legs: 'leg gear', helmet: 'head gear' }[item.slot];
+      toast(`You found a ${item.name.toLowerCase()}, but your current ${slot} is the same or better.`);
+    }
     updateHud();
   }
   function collectGear(item) {
