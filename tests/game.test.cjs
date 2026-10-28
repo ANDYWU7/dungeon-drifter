@@ -10,7 +10,7 @@ function loadGame(storage = new Map(), storageUnavailable = false, fixedRandom) 
   const frames = new Map();
   const timers = new Map();
   const canvasCalls = [];
-  const context2d = new Proxy({}, { get(target, method) { return method in target ? target[method] : (...args) => canvasCalls.push({ method, args, fillStyle: target.fillStyle }); } });
+  const context2d = new Proxy({}, { get(target, method) { return method in target ? target[method] : (...args) => canvasCalls.push({ method, args, fillStyle: target.fillStyle, lineWidth: target.lineWidth }); } });
   let nextId = 1;
   function makeNode() {
     const classes = new Set();
@@ -49,7 +49,7 @@ function loadGame(storage = new Map(), storageUnavailable = false, fixedRandom) 
     clearTimeout(id) { timers.delete(id); }
   });
   const source = fs.readFileSync(path.join(__dirname, '..', 'game.js'), 'utf8');
-  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `globalThis.api = { game, input, settings, startGame, pauseGame, resumeGame, returnToMenu, completeBoss, update, attack, dash, usePotion, generateMap, endRun, createEnemy, updateEnemy, drawEnemy, collectGear, defeatEnemy, openChest, beginFloor, render, pointIsVisible, getCellVisibility, tileMetrics, wallIsBright, isWall, canMove }; })();`), context);
+  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `globalThis.api = { game, input, settings, startGame, pauseGame, resumeGame, returnToMenu, completeBoss, update, attack, dash, usePotion, generateMap, endRun, createEnemy, updateEnemy, drawEnemy, collectGear, defeatEnemy, openChest, beginFloor, render, pointIsVisible, getCellVisibility, tileMetrics, wallIsBright, isWall, canMove, updateExit, insideBossRoom, tryMove, summonGuards, drawTile }; })();`), context);
   return { ...context.api, frames, timers, listeners, document, node, storage, canvasCalls };
 }
 
@@ -90,7 +90,17 @@ test('losing focus, hiding the page, and pausing release movement and sprint', (
   }
 });
 
-test('floor transitions wait through pause and cannot leak into a restart', () => {
+function useExit(g) {
+  Object.assign(g.game.player, g.game.keyDrop);
+  g.updateExit();
+  const exit = g.game.exit.tiles[0];
+  Object.assign(g.game.player, { x: exit.x + .5, y: exit.y + 1.23 });
+  g.updateExit();
+  Object.assign(g.game.player, { x: exit.x + .5, y: exit.y + .5 });
+  g.updateExit();
+}
+
+test('boss defeat waits for the key and exit, and resets safely after a restart', () => {
   const g = loadGame();
   g.startGame();
   g.completeBoss();
@@ -102,12 +112,16 @@ test('floor transitions wait through pause and cannot leak into a restart', () =
   g.update(.6);
   assert.equal(g.game.floor, 1);
   g.update(.61);
+  assert.equal(g.game.floor, 1, 'boss death never automatically changes floors');
+  useExit(g);
   assert.equal(g.game.floor, 2);
   g.completeBoss();
   g.startGame();
   for (const fn of [...g.timers.values()]) fn();
   g.update(2);
   assert.equal(g.game.floor, 1);
+  assert.equal(g.game.keyDrop, null);
+  assert.equal(g.game.hasKey, false);
 });
 
 test('combat actions cannot change a paused run', () => {
@@ -136,7 +150,8 @@ test('winning and losing stop the run and release controls', () => {
   g.startGame();
   g.game.floor = 3;
   g.completeBoss();
-  g.update(1.21);
+  assert.equal(g.game.running, true, 'the final boss also requires finding the exit');
+  useExit(g);
   assert.equal(g.game.running, false);
   assert.equal(g.frames.size, 0);
   assert.equal(g.node('result-title').textContent, 'Run complete');
@@ -171,7 +186,7 @@ test('generated maps connect the start, boss, chests, and enemies on every floor
       visited.add(key);
       queue.push({ x: x + 1, y }, { x: x - 1, y }, { x, y: y + 1 }, { x, y: y - 1 });
     }
-    for (const point of [map.boss, ...map.chests, ...map.spawns]) {
+    for (const point of [map.boss, ...map.exit.tiles.map((cell) => ({ x: cell.x, y: cell.y + 1 })), ...map.chests, ...map.spawns]) {
       assert.ok(visited.has(`${Math.floor(point.x)},${Math.floor(point.y)}`), `seed ${seed}, floor ${floor}`);
     }
   }
@@ -212,7 +227,9 @@ test('N and M jump to the requested floor with complete matching gear and restor
     assert.equal(g.game.player.stamina, 100);
     assert.equal(g.input.keys.size, 0);
     assert.equal(g.input.sprint, false);
-    assert.equal(g.game.floorAdvanceQueued, false);
+    assert.equal(g.game.bossDefeated, false);
+    assert.equal(g.game.hasKey, false);
+    assert.equal(g.game.keyDrop, null);
     assert.equal(g.frames.size, 1);
     assert.ok(g.game.enemies.some((enemy) => enemy.boss));
     assert.equal(g.node('weapon-readout').textContent, weapon);
@@ -637,4 +654,175 @@ test('exhaustion blocks keyboard and touch sprint and dash until full recovery',
     assert.equal(p.stamina, 72);
     assert.equal(p.dashTime, .18);
   }
+});
+
+test('locked wall exits need a collected key, become floor, and travel only on entry', () => {
+  const g = loadGame();
+  g.startGame(); g.game.enemies = []; g.game.chests = [];
+  const cell = g.game.exit.tiles[0];
+  Object.assign(g.game.player, { x: cell.x + .5, y: cell.y + 1.23 });
+  g.updateExit();
+  assert.equal(g.node('game-toast').textContent, 'You need the boss key to unlock this exit.');
+  assert.equal(g.game.exit.unlocked, false);
+  assert.equal(g.game.map[cell.y][cell.x], '#');
+  assert.equal(g.canMove(cell.x + .5, cell.y + .5), false);
+  g.completeBoss();
+  assert.ok(g.game.keyDrop);
+  assert.equal(g.game.hasKey, false);
+  Object.assign(g.game.player, g.game.keyDrop);
+  g.pauseGame(); g.updateExit();
+  assert.equal(g.game.hasKey, false, 'keys cannot be collected during pause');
+  g.resumeGame(); g.updateExit();
+  assert.equal(g.game.hasKey, true);
+  assert.equal(g.node('key-count').textContent, 1);
+  Object.assign(g.game.player, { x: cell.x + .5, y: cell.y + 1.23 });
+  g.updateExit();
+  assert.equal(g.game.exit.unlocked, true);
+  assert.equal(g.game.map[cell.y][cell.x], '.');
+  assert.equal(g.game.hasKey, false);
+  assert.equal(g.node('key-count').textContent, 0);
+  g.updateExit();
+  assert.equal(g.game.floor, 1, 'unlocking does not teleport a player outside the opening');
+  g.tryMove(g.game.player, 0, -.5, .22); g.updateExit();
+  assert.equal(g.game.floor, 2);
+  assert.equal(g.game.exit.unlocked, false);
+  assert.equal(g.game.keyDrop, null);
+  assert.equal(g.game.hasKey, false);
+});
+
+test('exit tiles are distinct from the boss room, reachable, and reserved from spawns', () => {
+  const g = loadGame();
+  for (let seed = 0; seed < 20; seed++) for (let floor = 1; floor <= 3; floor++) {
+    g.game.runSeed = seed;
+    const map = g.generateMap(floor), room = map.bossRoom;
+    assert.equal(map.exit.tiles.length, 2);
+    assert.ok(map.barriers.length > 0, 'boss room has a guarded entrance');
+    for (const cell of map.exit.tiles) {
+      assert.equal(map.grid[cell.y][cell.x], '#');
+      assert.equal(map.grid[cell.y + 1][cell.x], '.', 'the wall exit is approachable from inside its room');
+      assert.ok(cell.x < room.x || cell.x >= room.x + room.w || cell.y < room.y || cell.y >= room.y + room.h);
+      assert.ok(Math.hypot(cell.x - map.start.x, cell.y - map.start.y) > 15);
+      assert.equal([...map.chests, ...map.spawns].some((spawn) => Math.floor(spawn.x) === cell.x && Math.floor(spawn.y) === cell.y), false);
+    }
+    for (const edge of map.barriers) {
+      if (edge.x1 === edge.x2) {
+        assert.equal(map.grid[edge.y1][edge.x1 - 1], '.');
+        assert.equal(map.grid[edge.y1][edge.x1], '.');
+      } else {
+        assert.equal(map.grid[edge.y1 - 1][edge.x1], '.');
+        assert.equal(map.grid[edge.y1][edge.x1], '.');
+      }
+    }
+  }
+});
+
+test('bumping a locked exit at dash speed still prompts for a key and can unlock it', () => {
+  const g = loadGame(); g.startGame();
+  const cell = g.game.exit.tiles[0];
+  Object.assign(g.game.player, { x: cell.x + .5, y: cell.y + 1.37 });
+  const before = g.game.player.y;
+  g.tryMove(g.game.player, 0, -.238, .18);
+  assert.equal(g.game.player.y, before, 'locked wall blocks the dash');
+  g.updateExit();
+  assert.equal(g.node('game-toast').textContent, 'You need the boss key to unlock this exit.');
+  g.game.hasKey = true;
+  g.tryMove(g.game.player, 0, -.238, .18);
+  g.updateExit();
+  assert.equal(g.game.exit.unlocked, true);
+  assert.equal(g.game.map[cell.y][cell.x], '.');
+  assert.equal(g.game.floor, 1, 'the wall opens before the player can enter it');
+});
+
+test('boss-room barriers contain bosses and summons while allowing the player through', () => {
+  const g = loadGame(); g.startGame();
+  const room = g.game.bossRoom;
+  for (const edge of g.game.bossBarriers) {
+    const dx = edge.x1 === edge.x2 ? (edge.x1 === room.x ? -1 : 1) : 0;
+    const dy = edge.y1 === edge.y2 ? (edge.y1 === room.y ? -1 : 1) : 0;
+    const start = { x: (edge.x1 + edge.x2) / 2 - dx * .45, y: (edge.y1 + edge.y2) / 2 - dy * .45 };
+    for (const kind of ['king', 'warden', 'giant-slime', 'slime', 'guard']) {
+      const entity = { ...start, kind, arenaBound: true };
+      g.tryMove(entity, dx * .8, dy * .8, .25);
+      assert.ok(g.insideBossRoom(entity.x, entity.y, .25), kind);
+      assert.equal(entity.x, start.x); assert.equal(entity.y, start.y);
+    }
+    const player = { ...start };
+    g.tryMove(player, dx * .8, dy * .8, .22);
+    assert.equal(g.insideBossRoom(player.x, player.y), false, 'player crosses the glowing barrier');
+  }
+  const warden = { x: room.x + .4, y: room.y + .4, arenaBound: true };
+  g.game.enemies = [];
+  g.summonGuards(warden, 7, false);
+  assert.equal(g.game.enemies.length, 7);
+  for (const guard of g.game.enemies) {
+    assert.equal(guard.arenaBound, true);
+    assert.ok(g.insideBossRoom(guard.x, guard.y, .25));
+  }
+});
+
+test('slime descendants stay in the arena and drop one key only after the last split dies', () => {
+  const g = loadGame(); g.startGame();
+  g.game.enemies = g.game.enemies.filter((enemy) => enemy.boss);
+  g.game.player.weapon = { damage: 10000 };
+  let attacks = 0;
+  while (!g.game.bossDefeated && attacks++ < 20) {
+    const target = g.game.enemies.find((enemy) => enemy.hp > 0 && enemy.bossFamily);
+    assert.ok(target);
+    Object.assign(g.game.player, { x: target.x - .4, y: target.y, facingX: 1, facingY: 0, attackCooldown: 0 });
+    g.attack();
+    for (const slime of g.game.enemies) {
+      assert.equal(slime.arenaBound, true);
+      assert.ok(g.insideBossRoom(slime.x, slime.y, .25));
+    }
+    if (g.game.enemies.some((enemy) => enemy.bossFamily)) assert.equal(g.game.keyDrop, null);
+  }
+  assert.equal(g.game.bossDefeated, true);
+  assert.ok(g.game.keyDrop);
+  assert.equal(g.game.floor, 1);
+  const drop = g.game.keyDrop;
+  g.completeBoss();
+  assert.equal(g.game.keyDrop, drop, 'one key per boss');
+});
+
+test('warden and king drop keys at their defeat locations without advancing floors', () => {
+  const g = loadGame(); g.startGame();
+  for (const floor of [2, 3]) {
+    g.beginFloor(floor);
+    const boss = g.game.enemies.find((enemy) => enemy.boss);
+    boss.hp = 0;
+    g.defeatEnemy(boss);
+    assert.equal(g.game.floor, floor);
+    assert.equal(g.game.bossDefeated, true);
+    assert.equal(g.game.keyDrop.x, boss.x);
+    assert.equal(g.game.keyDrop.y, boss.y);
+    assert.equal(g.game.hasKey, false);
+  }
+});
+
+test('partly shadowed tiles keep normal borders on the lit sections only', () => {
+  const g = loadGame(); g.startGame();
+  g.canvasCalls.length = 0;
+  g.drawTile(4, 39, 48, 0, 0, { full: false, visible: true, mask: [0, 1], grid: 2 });
+  const strokes = g.canvasCalls.filter((call) => call.method === 'strokeRect');
+  assert.deepEqual(strokes.map((call) => call.lineWidth), [.5, 1]);
+  const clipIndex = g.canvasCalls.findIndex((call) => call.method === 'clip');
+  const normalIndex = g.canvasCalls.findIndex((call) => call.method === 'strokeRect' && call.lineWidth === 1);
+  assert.ok(normalIndex > clipIndex, 'the normal outline is clipped to the lit subcells');
+  assert.equal(g.canvasCalls.filter((call) => call.method === 'rect').length, 2);
+});
+
+test('the two colored exit squares disappear when unlocked', () => {
+  const g = loadGame(); g.startGame();
+  const cell = g.game.exit.tiles[0];
+  Object.assign(g.game.player, { x: cell.x + 1, y: cell.y + 1.5 });
+  g.canvasCalls.length = 0;
+  g.render();
+  for (const color of ['#4d99d4', '#d7a94d']) assert.ok(g.canvasCalls.some((call) => call.method === 'fillRect' && call.fillStyle === color));
+  g.game.hasKey = true;
+  Object.assign(g.game.player, { x: cell.x + .5, y: cell.y + 1.23 });
+  g.updateExit();
+  for (const tile of g.game.exit.tiles) assert.equal(g.game.map[tile.y][tile.x], '.');
+  g.canvasCalls.length = 0;
+  g.render();
+  assert.equal(g.canvasCalls.some((call) => call.fillStyle === '#4d99d4' || call.fillStyle === '#d7a94d'), false);
 });

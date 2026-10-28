@@ -17,6 +17,7 @@
   const TERRAIN_SHADOW = 'rgba(0,0,0,.78)';
   const WALL_SHADOW = 'rgba(0,0,0,.18)';
   const VOID_COLOR = '#000000';
+  const EXIT_COLORS = ['#4d99d4', '#d7a94d'];
   const KING_DETECT_RANGE = 4;
   const KING_SLASH_RANGE = 2;
   const KING_SLASH_ARC = Math.PI / 2;
@@ -50,7 +51,7 @@
     catch { recordStorageAvailable = false; return 0; }
   })();
   const input = { keys: new Set(), joystick: { active: false, x: 0, y: 0 }, sprint: false };
-  const game = { running: false, paused: false, runSeed: 0, last: 0, floor: 1, theme: FLOOR_THEMES[0], profile: FLOOR_PROFILES[0], map: [], mapWidth: WORLD_W, mapHeight: WORLD_H, player: null, bossPosition: null, enemies: [], chests: [], particles: [], visibleCells: new Set(), inventory: { weapon: null, armor: { chest: null, legs: null, helmet: null } }, slash: 0, shake: 0, flash: 0, elapsed: 0, gold: 0, toastTimer: 0, bossAlerted: false, bossDefeated: false, bossFamilyActive: false, floorAdvanceQueued: false, audio: null };
+  const game = { running: false, paused: false, runSeed: 0, last: 0, floor: 1, theme: FLOOR_THEMES[0], profile: FLOOR_PROFILES[0], map: [], mapWidth: WORLD_W, mapHeight: WORLD_H, player: null, bossPosition: null, bossRoom: null, bossBarriers: [], exit: null, keyDrop: null, hasKey: false, enemies: [], chests: [], particles: [], visibleCells: new Set(), inventory: { weapon: null, armor: { chest: null, legs: null, helmet: null } }, slash: 0, shake: 0, flash: 0, elapsed: 0, gold: 0, toastTimer: 0, bossAlerted: false, bossDefeated: false, bossFamilyActive: false, audio: null };
   let audioContext;
   let animationFrame = 0;
 
@@ -174,13 +175,16 @@
     const rooms = [];
     const startRoom = { x: 2, y: WORLD_H - 8, w: 9, h: 6 };
     const bossRoom = { x: Math.floor(WORLD_W / 2) - 5, y: Math.floor(WORLD_H / 2) - 4, w: 11, h: 9 };
+    const exitRoom = { x: WORLD_W - 11, y: 2 + Math.floor(random() * 6), w: 8, h: 6 };
+    const exitTiles = [{ x: exitRoom.x + 3, y: exitRoom.y - 1 }, { x: exitRoom.x + 4, y: exitRoom.y - 1 }];
+    const isExitWall = (x, y) => exitTiles.some((cell) => cell.x === x && cell.y === y);
     const overlaps = (a, b) => a.x < b.x + b.w + 2 && a.x + a.w + 2 > b.x && a.y < b.y + b.h + 2 && a.y + a.h + 2 > b.y;
     const carve = (room) => { for (let y = room.y; y < room.y + room.h; y++) for (let x = room.x; x < room.x + room.w; x++) if (x > 0 && y > 0 && x < WORLD_W - 1 && y < WORLD_H - 1) grid[y][x] = '.'; };
     const hallwayRadius = 1; // radius 1 makes every hallway three blocks wide
-    const brush = (x, y, radius = hallwayRadius) => { for (let yy = y - radius; yy <= y + radius; yy++) for (let xx = x - radius; xx <= x + radius; xx++) if (xx > 0 && yy > 0 && xx < WORLD_W - 1 && yy < WORLD_H - 1) grid[yy][xx] = '.'; };
+    const brush = (x, y, radius = hallwayRadius) => { for (let yy = y - radius; yy <= y + radius; yy++) for (let xx = x - radius; xx <= x + radius; xx++) if (xx > 0 && yy > 0 && xx < WORLD_W - 1 && yy < WORLD_H - 1 && !isExitWall(xx, yy)) grid[yy][xx] = '.'; };
     const center = (room) => ({ x: Math.floor(room.x + room.w / 2), y: Math.floor(room.y + room.h / 2) });
     const tunnel = (from, to) => { let x = from.x, y = from.y; const horizontalFirst = random() > .35; const stepX = x < to.x ? 1 : -1; const stepY = y < to.y ? 1 : -1; const walkX = () => { while (x !== to.x) { brush(x, y, 1); x += stepX; } }; const walkY = () => { while (y !== to.y) { brush(x, y, 1); y += stepY; } }; if (horizontalFirst) { walkX(); walkY(); } else { walkY(); walkX(); } brush(to.x, to.y, 1); };
-    rooms.push(startRoom, bossRoom); carve(startRoom); carve(bossRoom);
+    rooms.push(startRoom, bossRoom, exitRoom); carve(startRoom); carve(bossRoom); carve(exitRoom);
     const roomCount = 8 + floor * 2 + Math.floor(random() * 3);
     for (let i = 0; i < roomCount; i++) {
       const room = { x: 2 + Math.floor(random() * (WORLD_W - 11)), y: 2 + Math.floor(random() * (WORLD_H - 9)), w: 4 + Math.floor(random() * 4), h: 4 + Math.floor(random() * 3) };
@@ -201,8 +205,21 @@
     }
     const start = { x: startRoom.x + 2, y: startRoom.y + 2 };
     const boss = center(bossRoom);
+    const exit = { tiles: exitTiles, unlocked: false, occupied: false, bumped: false };
+    const barriers = [];
+    for (let x = bossRoom.x; x < bossRoom.x + bossRoom.w; x++) {
+      for (const y of [bossRoom.y, bossRoom.y + bossRoom.h]) {
+        if (grid[y - 1][x] === '.' && grid[y][x] === '.') barriers.push({ x1: x, y1: y, x2: x + 1, y2: y });
+      }
+    }
+    for (let y = bossRoom.y; y < bossRoom.y + bossRoom.h; y++) {
+      for (const x of [bossRoom.x, bossRoom.x + bossRoom.w]) {
+        if (grid[y][x - 1] === '.' && grid[y][x] === '.') barriers.push({ x1: x, y1: y, x2: x, y2: y + 1 });
+      }
+    }
     const cellKey = (x, y) => `${x},${y}`;
     const reserved = new Set([cellKey(start.x, start.y), cellKey(boss.x, boss.y)]);
+    exit.tiles.forEach((cell) => reserved.add(cellKey(cell.x, cell.y)));
     const floorCells = [];
     for (let y = 2; y < WORLD_H - 2; y++) for (let x = 2; x < WORLD_W - 2; x++) if (grid[y][x] === '.' && Math.hypot(x - start.x, y - start.y) > 4 && Math.hypot(x - boss.x, y - boss.y) > 4) floorCells.push({ x, y });
     const takeCell = (minFromStart = 0) => { for (let tries = 0; tries < 80; tries++) { const pick = floorCells[Math.floor(random() * floorCells.length)]; if (!pick) continue; const key = cellKey(pick.x, pick.y); if (!reserved.has(key) && Math.hypot(pick.x - start.x, pick.y - start.y) >= minFromStart) { reserved.add(key); return pick; } } return floorCells.find((pick) => !reserved.has(cellKey(pick.x, pick.y))) || { x: start.x + 1, y: start.y }; };
@@ -210,18 +227,19 @@
     const chests = Array.from({ length: chestCount }, () => { const cell = takeCell(7); return { x: cell.x + .5, y: cell.y + .5, open: false, id: `${floor}-${cell.x}-${cell.y}` }; });
     const enemyCount = 5 + floor * 2;
     const spawns = Array.from({ length: enemyCount }, (_, index) => { const cell = takeCell(8); return { x: cell.x + .5, y: cell.y + .5, role: index % 4 === 0 ? 'heavy' : 'light' }; });
-    return { grid, start, boss, chests, spawns };
+    return { grid, start, boss, bossRoom, barriers, exit, chests, spawns };
   }
   function beginFloor(floor) {
     game.summary.furthestFloor = Math.max(game.summary.furthestFloor, floor);
     game.floor = floor; game.theme = FLOOR_THEMES[floor - 1]; game.profile = FLOOR_PROFILES[floor - 1]; const generated = generateMap(floor); game.map = generated.grid; game.mapWidth = WORLD_W; game.mapHeight = WORLD_H; game.bossPosition = { x: generated.boss.x + .5, y: generated.boss.y + .5 };
+    game.bossRoom = generated.bossRoom; game.bossBarriers = generated.barriers; game.exit = generated.exit; game.keyDrop = null; game.hasKey = false;
     const previousPotions = game.player?.potions ?? 2; const maxHp = 100 + armorBonus();
     game.player = { x: generated.start.x + .5, y: generated.start.y + .5, hp: maxHp, maxHp, stamina: 100, maxStamina: 100, sprintExhausted: false, facingX: 1, facingY: 0, potions: previousPotions, weapon: game.inventory.weapon, invincible: 0, dashTime: 0, dashX: 0, dashY: 0, attackCooldown: 0 };
     game.enemies = generated.spawns.map((spawn, i) => createEnemy(spawn.role === 'heavy' ? game.profile.heavy : game.profile.light, spawn.x, spawn.y, { id: `enemy-${floor}-${i}` }));
-    game.enemies.push(createEnemy(game.profile.boss, game.bossPosition.x, game.bossPosition.y, { id: `boss-${floor}`, boss: true, bossFamily: true, summonTimer: 10 + Math.random() * 5 }));
+    game.enemies.push(createEnemy(game.profile.boss, game.bossPosition.x, game.bossPosition.y, { id: `boss-${floor}`, boss: true, bossFamily: true, arenaBound: true, summonTimer: 10 + Math.random() * 5 }));
     game.chests = generated.chests;
-    game.particles = []; game.visibleCells.clear(); game.slash = 0; game.bossAlerted = false; game.bossDefeated = false; game.bossFamilyActive = false; game.floorAdvanceQueued = false; game.floorAdvanceDelay = 0;
-    $('floor-name').textContent = game.theme.name; $('floor-number').textContent = String(floor).padStart(2, '0'); $('objective-text').textContent = `Defeat the ${game.profile.boss.name.toLowerCase()} to continue.`; $('boss-alert').classList.add('hidden'); updateHud();
+    game.particles = []; game.visibleCells.clear(); game.slash = 0; game.bossAlerted = false; game.bossDefeated = false; game.bossFamilyActive = false;
+    $('floor-name').textContent = game.theme.name; $('floor-number').textContent = String(floor).padStart(2, '0'); $('objective-text').textContent = `Defeat the ${game.profile.boss.name.toLowerCase()} for the exit key.`; $('boss-alert').classList.add('hidden'); updateHud();
   }
   function armorBonus() { return Object.values(game.inventory.armor).reduce((total, item) => total + (item?.armor || 0), 0); }
   function createEnemy(profile, x, y, extra = {}) { return { ...profile, ...extra, x, y, hp: profile.hp, maxHp: profile.hp, attackCooldown: profile.kind === 'king' ? 0 : Math.random() * 1.2, healTimer: profile.kind === 'king' ? KING_HEAL_INTERVAL : 0, kingWindup: 0, slash: 0, summonTimer: profile.kind === 'warden' ? 0 : extra.summonTimer, initialGuardsSpawned: false, facingX: 1, facingY: 0, hitFlash: 0, phase: Math.random() * TAU }; }
@@ -231,7 +249,21 @@
   function worldToScreen(x, y) { const { tile, ox, oy } = tileMetrics(); return { x: ox + x * tile, y: oy + y * tile, tile }; }
   function isWall(x, y) { const tx = Math.floor(x), ty = Math.floor(y); return tx < 0 || ty < 0 || tx >= game.mapWidth || ty >= game.mapHeight || game.map[ty]?.[tx] !== '.'; }
   function canMove(x, y, radius = .22) { return !isWall(x - radius, y - radius) && !isWall(x + radius, y - radius) && !isWall(x - radius, y + radius) && !isWall(x + radius, y + radius); }
-  function tryMove(entity, dx, dy, radius = .23) { const nx = entity.x + dx; if (canMove(nx, entity.y, radius)) entity.x = nx; const ny = entity.y + dy; if (canMove(entity.x, ny, radius)) entity.y = ny; }
+  function insideBossRoom(x, y, radius = 0) {
+    const room = game.bossRoom;
+    return room && x - radius >= room.x && x + radius <= room.x + room.w && y - radius >= room.y && y + radius <= room.y + room.h;
+  }
+  function tryMove(entity, dx, dy, radius = .23) {
+    const fits = (x, y) => {
+      if (!canMove(x, y, radius)) {
+        if (entity === game.player && game.exit && !game.exit.unlocked && game.exit.tiles.some((cell) => x + radius >= cell.x && x - radius <= cell.x + 1 && y + radius >= cell.y && y - radius <= cell.y + 1)) game.exit.bumped = true;
+        return false;
+      }
+      return !entity.arenaBound || insideBossRoom(x, y, radius);
+    };
+    const nx = entity.x + dx; if (fits(nx, entity.y)) entity.x = nx;
+    const ny = entity.y + dy; if (fits(entity.x, ny)) entity.y = ny;
+  }
   function direction() {
     let x = input.joystick.x; let y = input.joystick.y;
     if (!input.joystick.active) { x = (input.keys.has('d') || input.keys.has('arrowright') ? 1 : 0) - (input.keys.has('a') || input.keys.has('arrowleft') ? 1 : 0); y = (input.keys.has('s') || input.keys.has('arrowdown') ? 1 : 0) - (input.keys.has('w') || input.keys.has('arrowup') ? 1 : 0); }
@@ -240,9 +272,9 @@
   function attack() {
     if (!game.running || game.paused || game.player.dashTime > 0 || game.player.attackCooldown > 0) return;
     game.player.attackCooldown = .5; game.slash = .22; const p = game.player; const dir = Math.hypot(p.facingX, p.facingY) || 1; const fx = p.facingX / dir; const fy = p.facingY / dir; const damage = p.weapon?.damage ?? 10;
-    let hit = false;
-    game.enemies.forEach((enemy) => { const dx = enemy.x - p.x, dy = enemy.y - p.y, dist = Math.hypot(dx, dy); const dot = (dx * fx + dy * fy) / (dist || 1); if (dist < (enemy.boss ? 1.65 : 1.35) && dot > -.12) { enemy.hp -= damage; enemy.hitFlash = .14; hit = true; burst(enemy.x, enemy.y, enemy.boss ? game.theme.palette.bossLight : game.theme.palette.accent, 8); if (enemy.hp <= 0) defeatEnemy(enemy); } });
-    game.enemies = game.enemies.filter((enemy) => enemy.hp > 0); if (game.bossFamilyActive && !game.enemies.some((enemy) => enemy.bossFamily)) completeBoss(); if (hit) { game.shake = settings.shake ? .16 : 0; game.flash = settings.flashes ? .06 : 0; tone(120, .09, 'square'); } else tone(240, .04, 'triangle');
+    let hit = false, lastDefeated = null;
+    game.enemies.forEach((enemy) => { const dx = enemy.x - p.x, dy = enemy.y - p.y, dist = Math.hypot(dx, dy); const dot = (dx * fx + dy * fy) / (dist || 1); if (dist < (enemy.boss ? 1.65 : 1.35) && dot > -.12) { enemy.hp -= damage; enemy.hitFlash = .14; hit = true; burst(enemy.x, enemy.y, enemy.boss ? game.theme.palette.bossLight : game.theme.palette.accent, 8); if (enemy.hp <= 0) { defeatEnemy(enemy); if (enemy.bossFamily) lastDefeated = enemy; } } });
+    game.enemies = game.enemies.filter((enemy) => enemy.hp > 0); if (game.bossFamilyActive && !game.enemies.some((enemy) => enemy.bossFamily)) completeBoss(lastDefeated); if (hit) { game.shake = settings.shake ? .16 : 0; game.flash = settings.flashes ? .06 : 0; tone(120, .09, 'square'); } else tone(240, .04, 'triangle');
   }
   function dash() { if (!game.running || game.paused) return; if (exhaustionBlocksAction() || game.player.stamina < 28 || game.player.dashTime > 0) return; const d = direction(); const dx = d.mag ? d.x : game.player.facingX; const dy = d.mag ? d.y : game.player.facingY; game.player.stamina -= 28; game.player.dashTime = .18; game.player.dashX = dx; game.player.dashY = dy; game.player.invincible = .28; burst(game.player.x, game.player.y, '#69d8cc', 7); tone(300, .08, 'sawtooth'); }
   function usePotion() { const p = game.player; if (!game.running || game.paused || p.potions <= 0 || p.hp >= p.maxHp) return; p.potions--; p.hp = Math.min(p.maxHp, p.hp + 38); burst(p.x, p.y, '#f2bd57', 12); toast('You used a potion and restored 38 health.'); tone(520, .15, 'sine'); updateHud(); }
@@ -256,27 +288,61 @@
     const gold = awardGold(enemy); burst(enemy.x, enemy.y, enemy.boss ? game.theme.palette.bossLight : game.theme.palette.accent, enemy.boss ? 28 : 8);
     if (enemy.kind === 'giant-slime') { game.bossFamilyActive = true; spawnSlimeSplit(enemy); toast('The giant slime split. Defeat the smaller slimes.'); game.shake = settings.shake ? .45 : 0; game.flash = settings.flashes ? .16 : 0; tone(80, .3, 'sawtooth'); return; }
     if (enemy.kind === 'slime' && enemy.splitLevel < 3) { spawnSlimeSplit(enemy); toast('A slime split. More slimes remain.'); return; }
-    if (enemy.boss) { completeBoss(); return; }
+    if (enemy.boss) { completeBoss(enemy); return; }
     toast(`The ${enemy.name.toLowerCase()} was defeated. You found ${gold} gold.`); tone(enemy.kind === 'guard' ? 130 : 170, .08, 'square');
   }
   function spawnSlimeSplit(source) {
     const splitLevel = (source.splitLevel || 0) + 1; if (splitLevel > 3) return; const hp = Math.max(10, Math.floor(source.maxHp / 2));
-    [[-.65, 0], [.65, 0]].forEach(([offsetX, offsetY], index) => { const spot = findNearbyFloor(source.x + offsetX, source.y + offsetY); const profile = { kind: 'slime', name: 'SLIME', hp, damage: 10, goldMin: 5, goldMax: 15 }; game.enemies.push(createEnemy(profile, spot.x, spot.y, { id: `slime-${game.floor}-${splitLevel}-${index}-${Date.now()}`, splitLevel, bossFamily: true })); });
+    [[-.65, 0], [.65, 0]].forEach(([offsetX, offsetY], index) => { const spot = findNearbyFloor(source.x + offsetX, source.y + offsetY, source.arenaBound); const profile = { kind: 'slime', name: 'SLIME', hp, damage: 10, goldMin: 5, goldMax: 15 }; game.enemies.push(createEnemy(profile, spot.x, spot.y, { id: `slime-${game.floor}-${splitLevel}-${index}-${Date.now()}`, splitLevel, bossFamily: true, arenaBound: source.arenaBound })); });
   }
-  function findNearbyFloor(x, y) { const candidates = [[x, y], [x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1], [x + .7, y + .7], [x - .7, y - .7]]; const spot = candidates.find(([cx, cy]) => canMove(cx, cy, .18)); return spot ? { x: spot[0], y: spot[1] } : { x: game.player.x, y: game.player.y }; }
-  function completeBoss() { if (game.floorAdvanceQueued) return; game.summary.clearedFloors.add(game.floor); game.bossDefeated = true; game.bossFamilyActive = false; game.floorAdvanceQueued = true; game.floorAdvanceDelay = 1.2; $('objective-text').textContent = 'The next floor is open.'; toast(`The ${game.profile.boss.name.toLowerCase()} was defeated.`); game.shake = settings.shake ? .45 : 0; game.flash = settings.flashes ? .16 : 0; tone(80, .3, 'sawtooth'); }
+  function findNearbyFloor(x, y, arenaBound = false) {
+    if (arenaBound) { const room = game.bossRoom; x = Math.max(room.x + .4, Math.min(room.x + room.w - .4, x)); y = Math.max(room.y + .4, Math.min(room.y + room.h - .4, y)); }
+    const candidates = [[x, y], [x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1], [x + .7, y + .7], [x - .7, y - .7]];
+    const spot = candidates.find(([cx, cy]) => canMove(cx, cy, .25) && (!arenaBound || insideBossRoom(cx, cy, .25)));
+    return spot ? { x: spot[0], y: spot[1] } : arenaBound ? { ...game.bossPosition } : { x: game.player.x, y: game.player.y };
+  }
+  function completeBoss(source = game.bossPosition) {
+    if (game.bossDefeated) return;
+    game.summary.clearedFloors.add(game.floor); game.bossDefeated = true; game.bossFamilyActive = false;
+    const spot = findNearbyFloor(source?.x ?? game.bossPosition.x, source?.y ?? game.bossPosition.y, true);
+    game.keyDrop = { ...spot };
+    $('objective-text').textContent = 'Collect the key dropped by the boss.';
+    $('boss-alert').classList.add('hidden');
+    toast(`The ${game.profile.boss.name.toLowerCase()} dropped an exit key.`);
+    game.shake = settings.shake ? .45 : 0; game.flash = settings.flashes ? .16 : 0; tone(80, .3, 'sawtooth');
+  }
+  function updateExit() {
+    if (!game.running || game.paused) return;
+    const p = game.player, exit = game.exit;
+    if (game.keyDrop && Math.hypot(p.x - game.keyDrop.x, p.y - game.keyDrop.y) < .65) {
+      game.keyDrop = null; game.hasKey = true;
+      $('objective-text').textContent = 'Find the blue and amber exit tiles.';
+      toast('Exit key collected. Find the blue and amber exit tiles.'); updateHud();
+    }
+    const touching = exit.bumped || exit.tiles.some((cell) => Math.abs(p.x - cell.x - .5) <= .76 && Math.abs(p.y - cell.y - .5) <= .76);
+    exit.bumped = false;
+    if (!touching) { exit.occupied = false; return; }
+    if (!exit.unlocked) {
+      if (!game.hasKey) { if (!exit.occupied) toast('You need the boss key to unlock this exit.'); }
+      else {
+        exit.unlocked = true; game.hasKey = false;
+        exit.tiles.forEach((cell) => { game.map[cell.y][cell.x] = '.'; });
+        game.rayCache = new Map();
+        $('objective-text').textContent = 'Exit unlocked. Walk through the opening.';
+        toast('Exit unlocked. Walk through the opening.'); updateHud();
+      }
+      exit.occupied = true;
+      return;
+    }
+    const entered = exit.tiles.some((cell) => Math.floor(p.x) === cell.x && Math.floor(p.y) === cell.y);
+    if (entered) {
+      if (game.floor >= 3) endRun(true);
+      else { beginFloor(game.floor + 1); toast(`The ${game.theme.name.toLowerCase()} floor begins.`); }
+    }
+  }
   function update(dt) {
     if (!game.running || game.paused) return;
     game.elapsed += dt;
-    // Advance with game time so pausing and restarting also stop the delay.
-    if (game.floorAdvanceQueued) {
-      game.floorAdvanceDelay -= dt;
-      if (game.floorAdvanceDelay <= 0) {
-        if (game.floor >= 3) endRun(true);
-        else { beginFloor(game.floor + 1); toast(`The ${game.theme.name.toLowerCase()} floor begins.`); }
-        return;
-      }
-    }
     const p = game.player; p.invincible = Math.max(0, p.invincible - dt); p.dashTime = Math.max(0, p.dashTime - dt); p.attackCooldown = Math.max(0, p.attackCooldown - dt); game.slash = Math.max(0, game.slash - dt); game.shake = Math.max(0, game.shake - dt); game.flash = Math.max(0, game.flash - dt);
     if (p.sprintExhausted && p.stamina >= p.maxStamina) p.sprintExhausted = false;
     const sprinting = input.sprint && !p.sprintExhausted && p.stamina > 0;
@@ -287,7 +353,9 @@
     if (p.dashTime > 0) tryMove(p, p.dashX * 7 * dt, p.dashY * 7 * dt, .18); else if (d.mag) { const speed = sprinting ? 3.9 : 2.35; if (sprinting) { p.stamina = Math.max(0, p.stamina - 25 * dt); if (p.stamina <= 0) { p.stamina = 0; p.sprintExhausted = true; resetSprint(); toast('You are exhausted from running.'); } } tryMove(p, d.x * speed * dt, d.y * speed * dt, .22); }
     game.enemies.forEach((enemy) => updateEnemy(enemy, dt));
     game.chests.forEach((chest) => { if (!chest.open && Math.hypot(chest.x - p.x, chest.y - p.y) < .75) openChest(chest); });
-    if (!game.bossAlerted && Math.hypot(game.bossPosition.x - p.x, game.bossPosition.y - p.y) < 4.1) { game.bossAlerted = true; $('boss-alert').classList.remove('hidden'); toast(`The ${game.profile.boss.name.toLowerCase()} is nearby.`); tone(70, .28, 'sawtooth'); }
+    if (!game.running) return;
+    const floorBeforeExit = game.floor; updateExit(); if (!game.running || game.floor !== floorBeforeExit) return;
+    if (!game.bossDefeated && !game.bossAlerted && Math.hypot(game.bossPosition.x - p.x, game.bossPosition.y - p.y) < 4.1) { game.bossAlerted = true; $('boss-alert').classList.remove('hidden'); toast(`The ${game.profile.boss.name.toLowerCase()} is nearby.`); tone(70, .28, 'sawtooth'); }
     game.particles.forEach((particle) => { particle.life -= dt; particle.x += particle.vx * dt; particle.y += particle.vy * dt; particle.vx *= .96; particle.vy *= .96; }); game.particles = game.particles.filter((particle) => particle.life > 0); updateHud();
   }
   function updateEnemy(enemy, dt) {
@@ -329,7 +397,7 @@
     if (dist < contactRange && enemy.attackCooldown <= 0 && p.invincible <= 0) { p.hp = Math.max(0, p.hp - enemy.damage); enemy.attackCooldown = enemy.boss ? 1.25 : 1.05; game.shake = settings.shake ? .2 : 0; game.flash = settings.flashes ? .05 : 0; burst(p.x, p.y, game.theme.palette.bossLight, 6); tone(90, .08, 'square'); if (p.hp <= 0) endRun(false, 'You fainted'); }
     else if (enemy.attackCooldown <= 0) enemy.attackCooldown = enemy.boss ? 1.2 : .8;
   }
-  function summonGuards(warden, fixedCount = null, announce = true) { const count = fixedCount ?? (4 + Math.floor(Math.random() * 4)); for (let i = 0; i < count; i++) { const spot = findNearbyFloor(warden.x + (Math.random() - .5) * 5, warden.y + (Math.random() - .5) * 5); game.enemies.push(createEnemy({ kind: 'guard', name: 'GUARD', hp: 30, damage: 35, goldMin: 5, goldMax: 15 }, spot.x, spot.y, { id: `guard-${Date.now()}-${i}` })); } if (announce) toast(`The warden summoned ${count} guards.`); burst(warden.x, warden.y, game.theme.palette.bossLight, 18); }
+  function summonGuards(warden, fixedCount = null, announce = true) { const count = fixedCount ?? (4 + Math.floor(Math.random() * 4)); for (let i = 0; i < count; i++) { const spot = findNearbyFloor(warden.x + (Math.random() - .5) * 5, warden.y + (Math.random() - .5) * 5, true); game.enemies.push(createEnemy({ kind: 'guard', name: 'GUARD', hp: 30, damage: 35, goldMin: 5, goldMax: 15 }, spot.x, spot.y, { id: `guard-${Date.now()}-${i}`, arenaBound: true })); } if (announce) toast(`The warden summoned ${count} guards.`); burst(warden.x, warden.y, game.theme.palette.bossLight, 18); }
   function rollTier() { const chances = TIER_CHANCES[game.floor - 1]; const roll = Math.random(); if (roll < chances.rare) return 'rare'; if (roll < chances.rare + chances.uncommon) return 'uncommon'; return 'common'; }
   function openChest(chest) {
     if (chest.open) return;
@@ -514,26 +582,29 @@
       const brightWall = game.map[y][x] === '#' && wallIsBright(x, y, previousVisibleCells);
       if (visible) game.visibleCells.add(key);
       // Terrain remains readable in deep shadow; objects still use the ray mask.
-      drawTile(x, y, tile, ox, oy, brightWall ? { ...visibility, full: true } : visibility);
+      const exitIndex = game.exit && !game.exit.unlocked ? game.exit.tiles.findIndex((cell) => cell.x === x && cell.y === y) : -1;
+      drawTile(x, y, tile, ox, oy, brightWall ? { ...visibility, full: true } : visibility, EXIT_COLORS[exitIndex]);
     }
+    drawBossBarriers(tile, ox, oy);
+    if (game.keyDrop && pointIsVisible(game.keyDrop.x, game.keyDrop.y)) drawKey(game.keyDrop, tile);
     game.chests.forEach((chest) => { if (pointIsVisible(chest.x, chest.y)) drawChest(chest, tile, ox, oy); }); game.enemies.forEach((enemy) => { if (pointIsVisible(enemy.x, enemy.y)) drawEnemy(enemy, tile, ox, oy); }); drawPlayer(tile, ox, oy); game.particles.forEach((particle) => { if (!pointIsVisible(particle.x, particle.y)) return; const s = worldToScreen(particle.x, particle.y); ctx.globalAlpha = Math.max(0, particle.life / particle.maxLife); ctx.fillStyle = particle.color; ctx.fillRect(s.x - particle.size * tile / 2, s.y - particle.size * tile / 2, particle.size * tile, particle.size * tile); }); ctx.globalAlpha = 1;
     if (game.flash) { ctx.fillStyle = `rgba(255,${game.flash > .1 ? 150 : 210},${game.flash > .1 ? 105 : 190},${game.flash * 1.2})`; ctx.fillRect(-shakeX, -shakeY, w, h); }
     ctx.restore();
   }
-  function drawTile(x, y, tile, ox, oy, visibility = { full: true }) {
+  function drawTile(x, y, tile, ox, oy, visibility = { full: true }, colorOverride) {
     const px = ox + x * tile;
     const py = oy + y * tile;
     const cell = game.map[y][x];
     if (!isTerrain(cell)) return;
     const palette = game.theme.palette;
     if (cell === '#') {
-      ctx.fillStyle = palette.wall;
+      ctx.fillStyle = colorOverride || palette.wall;
       ctx.fillRect(px, py, tile + .5, tile + .5);
       if (!visibility.full) { ctx.fillStyle = WALL_SHADOW; ctx.fillRect(px, py, tile + .5, tile + .5); }
       return;
     }
 
-    const floorColor = (x * 7 + y * 13) % 4 === 0 ? palette.floorAlt : palette.floor;
+    const floorColor = colorOverride || ((x * 7 + y * 13) % 4 === 0 ? palette.floorAlt : palette.floor);
     ctx.fillStyle = floorColor;
     ctx.fillRect(px, py, tile + .5, tile + .5);
     if (!visibility.full) {
@@ -550,17 +621,39 @@
       });
     }
 
-    // Keep the simple floor detail only on complete tiles so it cannot draw
-    // a border across a section that the raycast has hidden.
-    if (visibility.full) {
+    // Thin the shadowed edge segments only; retain the normal border wherever
+    // the raycast lights this tile, including partially illuminated tiles.
+    ctx.strokeStyle = visibility.full ? 'rgba(235,229,209,.08)' : 'rgba(235,229,209,.025)';
+    ctx.lineWidth = visibility.full ? 1 : .5;
+    ctx.strokeRect(px + .5, py + .5, tile - 1, tile - 1);
+    if (!visibility.full && visibility.mask?.length) {
+      ctx.save(); ctx.beginPath();
+      const subTile = tile / visibility.grid;
+      visibility.mask.forEach((index) => ctx.rect(px + (index % visibility.grid) * subTile, py + Math.floor(index / visibility.grid) * subTile, subTile + .8, subTile + .8));
+      ctx.clip();
       ctx.strokeStyle = 'rgba(235,229,209,.08)';
       ctx.lineWidth = 1;
       ctx.strokeRect(px + .5, py + .5, tile - 1, tile - 1);
+      ctx.restore();
+    }
+    if (visibility.full) {
       if ((x * 31 + y * 11) % 11 === 0) {
         ctx.fillStyle = 'rgba(20,18,14,.24)';
         ctx.fillRect(px + tile * .22, py + tile * .58, tile * .22, 1);
       }
     }
+  }
+  function drawBossBarriers(tile, ox, oy) {
+    ctx.save(); ctx.strokeStyle = '#b49aff'; ctx.shadowColor = '#9871ff'; ctx.shadowBlur = 12; ctx.lineWidth = Math.max(2, tile * .065);
+    game.bossBarriers?.forEach((edge) => {
+      ctx.beginPath(); ctx.moveTo(ox + edge.x1 * tile, oy + edge.y1 * tile); ctx.lineTo(ox + edge.x2 * tile, oy + edge.y2 * tile); ctx.stroke();
+    });
+    ctx.restore();
+  }
+  function drawKey(key, tile) {
+    const point = worldToScreen(key.x, key.y);
+    ctx.save(); ctx.translate(point.x, point.y); ctx.strokeStyle = '#f1cd72'; ctx.shadowColor = '#d7a94d'; ctx.shadowBlur = 10; ctx.lineWidth = Math.max(2, tile * .07);
+    ctx.beginPath(); ctx.arc(-tile * .15, 0, tile * .12, 0, TAU); ctx.moveTo(-tile * .03, 0); ctx.lineTo(tile * .26, 0); ctx.lineTo(tile * .26, tile * .1); ctx.moveTo(tile * .14, 0); ctx.lineTo(tile * .14, tile * .08); ctx.stroke(); ctx.restore();
   }
   function drawChest(chest, tile, ox, oy) { const s = worldToScreen(chest.x, chest.y); const palette = game.theme.palette; ctx.save(); ctx.translate(s.x, s.y); ctx.fillStyle = chest.open ? palette.grout : palette.chest; ctx.fillRect(-tile * .25, -tile * .17, tile * .5, tile * .34); ctx.fillStyle = chest.open ? palette.wallTop : palette.accent; ctx.fillRect(-tile * .23, -tile * .19, tile * .46, tile * .1); ctx.fillStyle = palette.wall; ctx.fillRect(-tile * .04, -tile * .06, tile * .08, tile * .13); ctx.restore(); }
   function drawEnemy(enemy, tile, ox, oy) {
@@ -615,7 +708,7 @@
   }
   function drawBar(entity, x, y, width) { if (entity.hp >= entity.maxHp) return; ctx.fillStyle = 'rgba(10,9,8,.75)'; ctx.fillRect(x - width / 2, y, width, 3); ctx.fillStyle = entity.boss ? game.theme.palette.bossLight : game.theme.palette.accent; ctx.fillRect(x - width / 2, y, width * Math.max(0, entity.hp / entity.maxHp), 3); }
   function drawPlayer(tile, ox, oy) { const p = game.player, s = worldToScreen(p.x, p.y), palette = game.theme.palette; ctx.save(); ctx.translate(s.x, s.y); if (p.invincible > 0) ctx.globalAlpha = .55 + Math.sin(performance.now() / 50) * .35; ctx.shadowColor = palette.player; ctx.shadowBlur = tile * .22; ctx.fillStyle = palette.player; ctx.beginPath(); ctx.arc(0, 0, tile * .3, 0, TAU); ctx.fill(); ctx.shadowBlur = 0; ctx.strokeStyle = palette.playerLight; ctx.lineWidth = Math.max(2, tile * .06); ctx.stroke(); ctx.fillStyle = palette.playerLight; ctx.beginPath(); ctx.moveTo(p.facingX * tile * .38, p.facingY * tile * .38); ctx.lineTo(p.facingX * tile * .08 - p.facingY * tile * .15, p.facingY * tile * .08 + p.facingX * tile * .15); ctx.lineTo(p.facingX * tile * .08 + p.facingY * tile * .15, p.facingY * tile * .08 - p.facingX * tile * .15); ctx.fill(); if (game.slash) { ctx.strokeStyle = `rgba(196,188,114,${game.slash / .22})`; ctx.lineWidth = tile * .12; ctx.beginPath(); ctx.arc(0, 0, tile * 1.1, Math.atan2(p.facingY, p.facingX) - .8, Math.atan2(p.facingY, p.facingX) + .8); ctx.stroke(); } ctx.restore(); }
-  function updateHud() { if (!game.player) return; const p = game.player; const armor = game.inventory.armor; $('health-fill').style.width = `${Math.max(0, p.hp / p.maxHp) * 100}%`; $('stamina-fill').style.width = `${Math.max(0, p.stamina / p.maxStamina) * 100}%`; $('health-text').textContent = `${Math.ceil(p.hp)} / ${p.maxHp}`; $('potion-count').textContent = p.potions; $('gold-count').textContent = game.gold; $('weapon-readout').textContent = p.weapon?.name ?? 'UNARMED'; $('head-readout').textContent = armor.helmet?.name ?? 'NONE'; $('torso-readout').textContent = armor.chest?.name ?? 'NONE'; $('legs-readout').textContent = armor.legs?.name ?? 'NONE'; }
+  function updateHud() { if (!game.player) return; const p = game.player; const armor = game.inventory.armor; $('key-count').textContent = game.hasKey ? 1 : 0; $('health-fill').style.width = `${Math.max(0, p.hp / p.maxHp) * 100}%`; $('stamina-fill').style.width = `${Math.max(0, p.stamina / p.maxStamina) * 100}%`; $('health-text').textContent = `${Math.ceil(p.hp)} / ${p.maxHp}`; $('potion-count').textContent = p.potions; $('gold-count').textContent = game.gold; $('weapon-readout').textContent = p.weapon?.name ?? 'UNARMED'; $('head-readout').textContent = armor.helmet?.name ?? 'NONE'; $('torso-readout').textContent = armor.chest?.name ?? 'NONE'; $('legs-readout').textContent = armor.legs?.name ?? 'NONE'; }
   function toast(message) { const node = $('game-toast'); node.textContent = message; node.classList.add('show'); clearTimeout(game.toastTimer); game.toastTimer = setTimeout(() => node.classList.remove('show'), 1800); }
   function renderRecap(id, entries, emptyCopy, gear = false) {
     const list = $(id);
