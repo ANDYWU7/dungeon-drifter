@@ -49,7 +49,7 @@ function loadGame(storage = new Map(), storageUnavailable = false, fixedRandom) 
     clearTimeout(id) { timers.delete(id); }
   });
   const source = fs.readFileSync(path.join(__dirname, '..', 'game.js'), 'utf8');
-  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `globalThis.api = { game, input, settings, startGame, pauseGame, resumeGame, returnToMenu, completeBoss, update, attack, dash, usePotion, generateMap, endRun, createEnemy, updateEnemy, drawEnemy, collectGear, defeatEnemy, openChest, beginFloor, render, pointIsVisible, getCellVisibility, tileMetrics, wallIsBright, isWall, canMove, updateExit, insideBossRoom, tryMove, summonGuards, drawTile }; })();`), context);
+  vm.runInContext(source.replace(/\}\)\(\);\s*$/, `globalThis.api = { game, input, settings, startGame, pauseGame, resumeGame, returnToMenu, completeBoss, update, attack, dash, usePotion, generateMap, endRun, createEnemy, updateEnemy, drawEnemy, collectGear, defeatEnemy, openChest, beginFloor, render, pointIsVisible, getCellVisibility, tileMetrics, wallIsBright, isWall, canMove, updateExit, insideBossRoom, tryMove, summonGuards, drawTile, findBossEnclosure }; })();`), context);
   return { ...context.api, frames, timers, listeners, document, node, storage, canvasCalls };
 }
 
@@ -769,6 +769,7 @@ test('slime descendants stay in the arena and drop one key only after the last s
     const target = g.game.enemies.find((enemy) => enemy.hp > 0 && enemy.bossFamily);
     assert.ok(target);
     Object.assign(g.game.player, { x: target.x - .4, y: target.y, facingX: 1, facingY: 0, attackCooldown: 0 });
+    g.game.bossInsideTime = 2;
     g.attack();
     for (const slime of g.game.enemies) {
       assert.equal(slime.arenaBound, true);
@@ -825,4 +826,83 @@ test('the two colored exit squares disappear when unlocked', () => {
   g.canvasCalls.length = 0;
   g.render();
   assert.equal(g.canvasCalls.some((call) => call.fillStyle === '#4d99d4' || call.fillStyle === '#d7a94d'), false);
+});
+
+test('enclosures find the maximum rectangle containing the spawn in irregular maps', () => {
+  const g = loadGame();
+  for (let seed = 1; seed <= 80; seed++) {
+    let value = seed;
+    const grid = Array.from({ length: 6 }, () => Array.from({ length: 7 }, () => {
+      value = (Math.imul(value, 1664525) + 1013904223) >>> 0;
+      return value % 5 === 0 ? '#' : '.';
+    }));
+    grid[3][3] = '.';
+    let maxArea = 0;
+    for (let top = 0; top <= 3; top++) for (let bottom = 3; bottom < 6; bottom++) {
+      for (let left = 0; left <= 3; left++) for (let right = 3; right < 7; right++) {
+        let clear = true;
+        for (let y = top; y <= bottom; y++) for (let x = left; x <= right; x++) if (grid[y][x] !== '.') clear = false;
+        if (clear) maxArea = Math.max(maxArea, (bottom - top + 1) * (right - left + 1));
+      }
+    }
+    const r = g.findBossEnclosure(grid, { x: 3.5, y: 3.5 });
+    assert.equal(r.w * r.h, maxArea, `seed ${seed}`);
+    assert.ok(r.x <= 3 && r.x + r.w > 3 && r.y <= 3 && r.y + r.h > 3);
+    for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) assert.equal(grid[y][x], '.');
+  }
+});
+
+test('generated enclosures expand with the floor and move barriers to the new perimeter', () => {
+  const g = loadGame();
+  let expanded = 0;
+  for (let seed = 0; seed < 60; seed++) for (let floor = 1; floor <= 3; floor++) {
+    g.game.runSeed = seed;
+    const map = g.generateMap(floor), r = map.bossRoom;
+    assert.ok(r.w * r.h >= 99);
+    if (r.w * r.h > 99) expanded++;
+    assert.ok(map.boss.x >= r.x && map.boss.x < r.x + r.w && map.boss.y >= r.y && map.boss.y < r.y + r.h);
+    for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) assert.equal(map.grid[y][x], '.');
+    for (const e of map.barriers) assert.ok(e.x1 === e.x2 ? e.x1 === r.x || e.x1 === r.x + r.w : e.y1 === r.y || e.y1 === r.y + r.h);
+  }
+  assert.ok(expanded > 0);
+});
+
+test('boss damage requires two continuous seconds inside and resets on exit', () => {
+  const g = loadGame(); g.startGame();
+  const r = g.game.bossRoom, p = g.game.player, e = g.game.bossBarriers[0];
+  const dx = e.x1 === e.x2 ? (e.x1 === r.x ? 1 : -1) : 0;
+  const dy = e.y1 === e.y2 ? (e.y1 === r.y ? 1 : -1) : 0;
+  const cx = (e.x1 + e.x2) / 2, cy = (e.y1 + e.y2) / 2;
+  const boss = g.game.enemies.find((enemy) => enemy.boss);
+  Object.assign(boss, { x: cx + dx * .65, y: cy + dy * .65, hp: 10000, maxHp: 10000, attackCooldown: 100 });
+  g.game.enemies = [boss]; g.game.chests = [];
+  Object.assign(p, { x: cx - dx * .35, y: cy - dy * .35, facingX: dx, facingY: dy, invincible: 100 });
+  const swing = () => { p.attackCooldown = 0; g.attack(); };
+  swing(); assert.equal(boss.hp, 10000);
+  assert.match(g.node('game-toast').textContent, /2 seconds/);
+  g.tryMove(p, dx * .8, dy * .8, .22);
+  g.update(1); swing(); assert.equal(boss.hp, 10000);
+  g.pauseGame(); g.update(10); g.resumeGame();
+  assert.equal(g.game.bossInsideTime, 1, 'paused time does not count');
+  g.update(.99); swing(); assert.equal(boss.hp, 10000);
+  g.update(.01); swing(); assert.ok(boss.hp < 10000);
+  const hp = boss.hp;
+  g.tryMove(p, -dx * .8, -dy * .8, .22);
+  assert.equal(g.game.bossInsideTime, 0);
+  g.tryMove(p, dx * .8, dy * .8, .22);
+  swing(); assert.equal(boss.hp, hp, 'reentry does not preserve eligibility');
+  g.update(2); swing(); assert.ok(boss.hp < hp);
+  g.beginFloor(2); assert.equal(g.game.bossInsideTime, 0);
+});
+
+test('slime descendants share the delay while guards remain damageable', () => {
+  const g = loadGame(); g.startGame();
+  const p = g.game.player;
+  Object.assign(p, { ...g.game.bossPosition, facingX: 1, facingY: 0 });
+  const profile = { kind: 'slime', name: 'SLIME', hp: 100, damage: 10 };
+  const slime = g.createEnemy(profile, p.x + .5, p.y, { bossFamily: true, arenaBound: true });
+  const guard = g.createEnemy({ ...profile, kind: 'guard' }, p.x + .5, p.y, { arenaBound: true });
+  g.game.enemies = [slime, guard];
+  g.attack(); assert.equal(slime.hp, 100); assert.ok(guard.hp < 100);
+  g.game.bossInsideTime = 2; p.attackCooldown = 0; g.attack(); assert.ok(slime.hp < 100);
 });

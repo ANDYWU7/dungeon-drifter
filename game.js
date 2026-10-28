@@ -169,6 +169,26 @@
     toast(`Testing: ${game.theme.name.toLowerCase()} with full ${tier} gear.`);
   }
   function seededRandom(seed) { let value = seed >>> 0; return () => { value += 0x6D2B79F5; let t = value; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+  // For every row span containing the spawn, take its widest uninterrupted
+  // floor run through the spawn column. One of these is the maximum rectangle.
+  function findBossEnclosure(grid, spawn) {
+    const sx = Math.floor(spawn.x), sy = Math.floor(spawn.y);
+    let best = { x: sx, y: sy, w: 1, h: 1 };
+    for (let top = sy; top >= 0; top--) {
+      const open = Array(grid[0].length).fill(true);
+      for (let bottom = top; bottom < grid.length; bottom++) {
+        for (let x = 0; x < open.length; x++) open[x] = open[x] && grid[bottom][x] === '.';
+        if (!open[sx]) break;
+        if (bottom < sy) continue;
+        let left = sx, right = sx;
+        while (left > 0 && open[left - 1]) left--;
+        while (right + 1 < open.length && open[right + 1]) right++;
+        const w = right - left + 1, h = bottom - top + 1;
+        if (w * h > best.w * best.h) best = { x: left, y: top, w, h };
+      }
+    }
+    return best;
+  }
   function generateMap(floor) {
     const random = seededRandom((game.runSeed + floor * 1777) >>> 0);
     const grid = Array.from({ length: WORLD_H }, () => Array(WORLD_W).fill('#'));
@@ -205,15 +225,16 @@
     }
     const start = { x: startRoom.x + 2, y: startRoom.y + 2 };
     const boss = center(bossRoom);
+    const enclosure = findBossEnclosure(grid, boss);
     const exit = { tiles: exitTiles, unlocked: false, occupied: false, bumped: false };
     const barriers = [];
-    for (let x = bossRoom.x; x < bossRoom.x + bossRoom.w; x++) {
-      for (const y of [bossRoom.y, bossRoom.y + bossRoom.h]) {
-        if (grid[y - 1][x] === '.' && grid[y][x] === '.') barriers.push({ x1: x, y1: y, x2: x + 1, y2: y });
+    for (let x = enclosure.x; x < enclosure.x + enclosure.w; x++) {
+      for (const y of [enclosure.y, enclosure.y + enclosure.h]) {
+        if (grid[y - 1]?.[x] === '.' && grid[y]?.[x] === '.') barriers.push({ x1: x, y1: y, x2: x + 1, y2: y });
       }
     }
-    for (let y = bossRoom.y; y < bossRoom.y + bossRoom.h; y++) {
-      for (const x of [bossRoom.x, bossRoom.x + bossRoom.w]) {
+    for (let y = enclosure.y; y < enclosure.y + enclosure.h; y++) {
+      for (const x of [enclosure.x, enclosure.x + enclosure.w]) {
         if (grid[y][x - 1] === '.' && grid[y][x] === '.') barriers.push({ x1: x, y1: y, x2: x, y2: y + 1 });
       }
     }
@@ -227,12 +248,12 @@
     const chests = Array.from({ length: chestCount }, () => { const cell = takeCell(7); return { x: cell.x + .5, y: cell.y + .5, open: false, id: `${floor}-${cell.x}-${cell.y}` }; });
     const enemyCount = 5 + floor * 2;
     const spawns = Array.from({ length: enemyCount }, (_, index) => { const cell = takeCell(8); return { x: cell.x + .5, y: cell.y + .5, role: index % 4 === 0 ? 'heavy' : 'light' }; });
-    return { grid, start, boss, bossRoom, barriers, exit, chests, spawns };
+    return { grid, start, boss, bossRoom: enclosure, barriers, exit, chests, spawns };
   }
   function beginFloor(floor) {
     game.summary.furthestFloor = Math.max(game.summary.furthestFloor, floor);
     game.floor = floor; game.theme = FLOOR_THEMES[floor - 1]; game.profile = FLOOR_PROFILES[floor - 1]; const generated = generateMap(floor); game.map = generated.grid; game.mapWidth = WORLD_W; game.mapHeight = WORLD_H; game.bossPosition = { x: generated.boss.x + .5, y: generated.boss.y + .5 };
-    game.bossRoom = generated.bossRoom; game.bossBarriers = generated.barriers; game.exit = generated.exit; game.keyDrop = null; game.hasKey = false;
+    game.bossRoom = generated.bossRoom; game.bossBarriers = generated.barriers; game.bossInsideTime = 0; game.exit = generated.exit; game.keyDrop = null; game.hasKey = false;
     const previousPotions = game.player?.potions ?? 2; const maxHp = 100 + armorBonus();
     game.player = { x: generated.start.x + .5, y: generated.start.y + .5, hp: maxHp, maxHp, stamina: 100, maxStamina: 100, sprintExhausted: false, facingX: 1, facingY: 0, potions: previousPotions, weapon: game.inventory.weapon, invincible: 0, dashTime: 0, dashX: 0, dashY: 0, attackCooldown: 0 };
     game.enemies = generated.spawns.map((spawn, i) => createEnemy(spawn.role === 'heavy' ? game.profile.heavy : game.profile.light, spawn.x, spawn.y, { id: `enemy-${floor}-${i}` }));
@@ -263,6 +284,7 @@
     };
     const nx = entity.x + dx; if (fits(nx, entity.y)) entity.x = nx;
     const ny = entity.y + dy; if (fits(entity.x, ny)) entity.y = ny;
+    if (entity === game.player && !insideBossRoom(entity.x, entity.y, .22)) game.bossInsideTime = 0;
   }
   function direction() {
     let x = input.joystick.x; let y = input.joystick.y;
@@ -272,8 +294,18 @@
   function attack() {
     if (!game.running || game.paused || game.player.dashTime > 0 || game.player.attackCooldown > 0) return;
     game.player.attackCooldown = .5; game.slash = .22; const p = game.player; const dir = Math.hypot(p.facingX, p.facingY) || 1; const fx = p.facingX / dir; const fy = p.facingY / dir; const damage = p.weapon?.damage ?? 10;
-    let hit = false, lastDefeated = null;
-    game.enemies.forEach((enemy) => { const dx = enemy.x - p.x, dy = enemy.y - p.y, dist = Math.hypot(dx, dy); const dot = (dx * fx + dy * fy) / (dist || 1); if (dist < (enemy.boss ? 1.65 : 1.35) && dot > -.12) { enemy.hp -= damage; enemy.hitFlash = .14; hit = true; burst(enemy.x, enemy.y, enemy.boss ? game.theme.palette.bossLight : game.theme.palette.accent, 8); if (enemy.hp <= 0) { defeatEnemy(enemy); if (enemy.bossFamily) lastDefeated = enemy; } } });
+    if (!insideBossRoom(p.x, p.y, .22)) game.bossInsideTime = 0;
+    let hit = false, lastDefeated = null, blockedBoss = false;
+    game.enemies.forEach((enemy) => {
+      const dx = enemy.x - p.x, dy = enemy.y - p.y, dist = Math.hypot(dx, dy);
+      const dot = (dx * fx + dy * fy) / (dist || 1);
+      if (dist >= (enemy.boss ? 1.65 : 1.35) || dot <= -.12) return;
+      if ((enemy.boss || enemy.bossFamily) && game.bossInsideTime < 2) { blockedBoss = true; return; }
+      enemy.hp -= damage; enemy.hitFlash = .14; hit = true;
+      burst(enemy.x, enemy.y, enemy.boss ? game.theme.palette.bossLight : game.theme.palette.accent, 8);
+      if (enemy.hp <= 0) { defeatEnemy(enemy); if (enemy.bossFamily) lastDefeated = enemy; }
+    });
+    if (blockedBoss) toast('Stay inside the enclosure for 2 seconds before damaging the boss.');
     game.enemies = game.enemies.filter((enemy) => enemy.hp > 0); if (game.bossFamilyActive && !game.enemies.some((enemy) => enemy.bossFamily)) completeBoss(lastDefeated); if (hit) { game.shake = settings.shake ? .16 : 0; game.flash = settings.flashes ? .06 : 0; tone(120, .09, 'square'); } else tone(240, .04, 'triangle');
   }
   function dash() { if (!game.running || game.paused) return; if (exhaustionBlocksAction() || game.player.stamina < 28 || game.player.dashTime > 0) return; const d = direction(); const dx = d.mag ? d.x : game.player.facingX; const dy = d.mag ? d.y : game.player.facingY; game.player.stamina -= 28; game.player.dashTime = .18; game.player.dashX = dx; game.player.dashY = dy; game.player.invincible = .28; burst(game.player.x, game.player.y, '#69d8cc', 7); tone(300, .08, 'sawtooth'); }
@@ -349,8 +381,10 @@
     const recoveryRate = 18 + (p.stamina / p.maxStamina) * 30;
     p.stamina = Math.min(p.maxStamina, p.stamina + (sprinting ? 9 : recoveryRate) * dt);
     if (p.stamina >= p.maxStamina) p.sprintExhausted = false;
+    const insideBeforeMove = insideBossRoom(p.x, p.y, .22);
     const d = direction(); if (d.mag) { p.facingX = d.x; p.facingY = d.y; }
     if (p.dashTime > 0) tryMove(p, p.dashX * 7 * dt, p.dashY * 7 * dt, .18); else if (d.mag) { const speed = sprinting ? 3.9 : 2.35; if (sprinting) { p.stamina = Math.max(0, p.stamina - 25 * dt); if (p.stamina <= 0) { p.stamina = 0; p.sprintExhausted = true; resetSprint(); toast('You are exhausted from running.'); } } tryMove(p, d.x * speed * dt, d.y * speed * dt, .22); }
+    game.bossInsideTime = insideBeforeMove && insideBossRoom(p.x, p.y, .22) ? Math.min(2, game.bossInsideTime + dt) : 0;
     game.enemies.forEach((enemy) => updateEnemy(enemy, dt));
     game.chests.forEach((chest) => { if (!chest.open && Math.hypot(chest.x - p.x, chest.y - p.y) < .75) openChest(chest); });
     if (!game.running) return;
